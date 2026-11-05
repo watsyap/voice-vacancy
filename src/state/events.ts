@@ -23,8 +23,9 @@ export type Event =
   | { type: 'DRAFT_EDIT'; text: string }
   | { type: 'DONE' }
   | { type: 'SUBMIT_TEXT'; text: string }
-  | { type: 'ANALYZE_OK'; res: AnalyzeRes }
-  | { type: 'ANALYZE_FAIL' }
+  /** demo — сервер вернул X-Demo: 1 (AGENTS.md §6); флаг не сбрасывается. */
+  | { type: 'ANALYZE_OK'; res: AnalyzeRes; demo?: boolean }
+  | { type: 'ANALYZE_FAIL'; demo?: boolean }
   | { type: 'SKIP_FOLLOWUP' }
   | { type: 'SKIP' }
   | { type: 'RERECORD' }

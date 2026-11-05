@@ -1,0 +1,10 @@
+.badge {
+  position: fixed;
+  top: var(--sp-3);
+  right: var(--sp-3);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--r-btn);
+  background: var(--surface);
+  color: var(--text-2);
+  font: var(--fs-label) var(--font);
+}

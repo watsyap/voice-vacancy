@@ -1,6 +1,7 @@
 import { useEffect, type Dispatch } from 'react';
 import type { Event } from '../state/events';
 import { isListening, type State } from '../state/machine';
+import { analyze } from '../lib/api';
 import { speechSupported } from './useSpeech';
 
 /** Побочные эффекты по фазе (AGENTS.md §3); результат возвращается событием. */
@@ -35,6 +36,18 @@ export function useEffects(state: State, dispatch: Dispatch<Event>): void {
       cancelled = true;
     };
   }, [state.phase, dispatch]);
+
+  // S9: анализ ответа; ≤ 4 с, затем S12 (spec §6). Уход из S9 отменяет запрос.
+  const transcript = state.answers[state.q].transcript;
+  useEffect(() => {
+    if (state.phase !== 'S9') return;
+    const ctrl = new AbortController();
+    void analyze(state.q, transcript, ctrl.signal).then((r) => {
+      if (ctrl.signal.aborted) return;
+      dispatch(r.ok ? { type: 'ANALYZE_OK', res: r.res, demo: r.demo } : { type: 'ANALYZE_FAIL', demo: r.demo });
+    });
+    return () => ctrl.abort();
+  }, [state.phase, state.q, transcript, dispatch]);
 
   // S22: вкладка скрыта во время записи → пауза.
   const listening = isListening(state);

@@ -266,7 +266,7 @@ export function reducer(s: State, e: Event): State {
         followup: e.res.followup,
         followupUsed: a.followupUsed || next === 'S11',
       });
-      return { ...patched, phase: next, inFollowup: next === 'S11', draft: '', interim: '' };
+      return { ...patched, phase: next, inFollowup: next === 'S11', draft: '', interim: '', demo: s.demo || !!e.demo };
     }
 
     case 'ANALYZE_FAIL':
@@ -274,6 +274,7 @@ export function reducer(s: State, e: Event): State {
         ...setAnswer(s, s.q, { slots: null, completeness: 0, status: 'raw', followup: null }),
         phase: 'S12',
         inFollowup: false,
+        demo: s.demo || !!e.demo,
       };
 
     case 'SKIP_FOLLOWUP':

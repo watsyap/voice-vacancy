@@ -2,17 +2,20 @@ import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
 import type { Q } from '../shared/types';
 import { QS } from '../shared/types';
 import { Actions, type Action } from './components/Actions';
+import { DemoBadge } from './components/DemoBadge';
 import { ProgressRing, type RingMode, type SegmentState } from './components/ProgressRing';
 import { QuestionView } from './components/QuestionView';
 import { StatusLine } from './components/StatusLine';
 import { TextAnswer } from './components/TextAnswer';
 import { TranscriptLive } from './components/TranscriptLive';
+import { Understood } from './components/Understood';
 import { CONFIG } from './config';
 import { useEffects } from './hooks/useEffects';
 import { speechSupported, useSpeech } from './hooks/useSpeech';
 import { useVolume } from './hooks/useVolume';
+import { rawSavedText, understoodText } from './lib/understood';
 import type { Event } from './state/events';
-import { initialState, isListening, isRecording, reducer, type State } from './state/machine';
+import { initialState, isListening, isRecording, isResolved, reducer, type State } from './state/machine';
 import styles from './App.module.css';
 
 // Тексты — flow.md §3 и spec §4. Не придумывать новые.
@@ -35,10 +38,20 @@ function ringMode(s: State): RingMode {
   return 'idle';
 }
 
+/** Итог ответа: «Понял: …» или «Ответ сохранён: …» (S12). */
+function answerText(s: State): string {
+  const a = s.answers[s.q];
+  if (a.status === 'raw') return rawSavedText(a.transcript);
+  if (a.status === 'analyzed' || a.status === 'partial') return understoodText(s.q, a.slots);
+  return '';
+}
+
 function statusOf(s: State): string {
   const followup = s.answers[s.q].followup ?? '';
   if (s.phase === 'S2') return 'Разрешите доступ к микрофону';
   if (s.phase === 'S9') return 'Разбираю ответ';
+  if (s.phase === 'S20') return 'Нужен хотя бы один ответ, чтобы собрать вакансию';
+  if (isResolved(s.phase) || s.phase === 'S15') return answerText(s);
   if (!isRecording(s.phase)) return '';
   if (s.phase === 'S7') return 'Расскажите чуть подробнее';
   if (s.phase === 'S11') return followup;
@@ -57,6 +70,9 @@ function statusOf(s: State): string {
   }
 }
 
+/** Тап по сегменту — только здесь (spec §4.1, §7 S15). */
+const SEGMENT_PHASES: State['phase'][] = ['S10', 'S10p', 'S12', 'S14', 'S20'];
+
 type ActionSet = { primary?: Action; secondary?: Action; links?: [] | [Action] | [Action, Action] };
 
 function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): ActionSet {
@@ -72,6 +88,20 @@ function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): Actio
 
   if (s.phase === 'S1') {
     return { primary: { label: 'Начать', onClick: ev({ type: 'START' }) }, links: [{ label: 'Ответить текстом', onClick: ev({ type: 'START_TEXT' }) }] };
+  }
+  const rerecord: Action = { label: 'Перезаписать', onClick: ev({ type: 'RERECORD' }) };
+  const next: Action = { label: 'Следующий вопрос', onClick: ev({ type: 'NEXT' }) };
+  // «Собрать вакансию» — запуск генерации появится в A5.5.
+  const build: Action = { label: 'Собрать вакансию', onClick: () => {} };
+  switch (s.phase) {
+    case 'S10':
+    case 'S10p':
+    case 'S12':
+      return { primary: s.q === 4 ? build : next, secondary: rerecord };
+    case 'S14':
+      return s.q === 4 ? { primary: build } : {};
+    case 'S15':
+      return { primary: next, secondary: rerecord };
   }
   if (!isRecording(s.phase)) return {};
 
@@ -142,6 +172,7 @@ export function App() {
 
   return (
     <main className={styles.screen}>
+      <DemoBadge visible={state.demo} />
       <section className={styles.top}>
         {isIntro ? (
           <p className={styles.intro}>{INTRO}</p>
@@ -160,10 +191,13 @@ export function App() {
           pulseKey={state.draft.length + state.interim.length}
           centerLabel={center?.label}
           onCenter={center?.onClick}
+          segmentsClickable={SEGMENT_PHASES.includes(state.phase)}
+          onSegment={(q) => dispatch({ type: 'OPEN_SEGMENT', q })}
         />
       </section>
 
       <section className={styles.statusZone}>
+        {state.phase === 'S11' && <Understood q={state.q} slots={state.answers[state.q].slots} />}
         <StatusLine text={statusOf(state)} />
         {recording && state.inputMode === 'voice' && (
           <TranscriptLive finalText={state.draft} interimText={state.interim} />

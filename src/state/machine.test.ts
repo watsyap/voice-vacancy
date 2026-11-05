@@ -392,3 +392,16 @@ describe('A5.2 — голос и текстовый режим', () => {
     expect(reducer(s, { type: 'PAUSE' })).toBe(s);
   });
 });
+
+describe('A5.3 — демо-флаг', () => {
+  it('X-Demo в ответе анализа ставит demo и не сбрасывается', () => {
+    let s = run(inS9(), { ...TWO_TASKS, demo: true } as Event);
+    expect(s.demo).toBe(true);
+    s = run(s, { type: 'NEXT' }, { type: 'SUBMIT_TEXT', text: 'запуск приложения для курьеров быстро' }, { type: 'ANALYZE_FAIL' });
+    expect(s.demo).toBe(true);
+  });
+
+  it('ошибка с X-Demo тоже ставит demo', () => {
+    expect(run(inS9(), { type: 'ANALYZE_FAIL', demo: true }).demo).toBe(true);
+  });
+});

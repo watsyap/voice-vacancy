@@ -5,8 +5,8 @@
   "description": "Голосовая вакансия: менеджер голосом отвечает на 4 вопроса, система собирает описание вакансии.",
   "type": "module",
   "scripts": {
-    "dev": "vercel dev",
-    "dev:ui": "vite",
+    "dev": "vite",
+    "dev:full": "vercel dev",
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "lint": "eslint . && tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json"
@@ -16,6 +16,7 @@
     "url": "git+https://github.com/watsyap/voice-vacancy.git"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.5.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
