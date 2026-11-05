@@ -7,7 +7,7 @@
   --ring-idle: #D2D2D7; --ring-active: #111114; --ring-done: #34C759;
   /* типографика — предложено */
   --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --fs-question: 24px/1.3; --fs-body: 16px/1.5; --fs-caption: 14px/1.4; --fs-label: 12px/1.3;
+  --fs-question: 24px/1.3; --fs-question-min: 18px; --fs-body: 16px/1.5; --fs-caption: 14px/1.4; --fs-label: 12px/1.3;
   --fw-question: 600; --fw-body: 400;
   /* отступы (шаг 4) и радиусы — предложено */
   --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-6: 24px; --sp-8: 32px; --sp-12: 48px;
@@ -22,7 +22,7 @@
   --t-ring-out: 200ms; --t-fade-reduced: 150ms;
   --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1); --ease-out: ease-out; --ease-io: ease-in-out;
   /* прочее — предложено */
-  --content-w: 560px; --opacity-raw: 0.45;
+  --content-w: 560px; --question-w: 800px; --opacity-raw: 0.45;
 }
 @media (prefers-color-scheme: dark) {
   :root { /* предложено */

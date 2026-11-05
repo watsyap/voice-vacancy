@@ -5,13 +5,16 @@
 .question {
   margin: 0;
   font: var(--fw-question) var(--fs-question) var(--font);
-  /* spec §4.1 «до 2 строк» не обрезаем: на 360 px Q1 и Q3 занимают 3 строки (вопрос в decisions.md). */
+  text-align: center;
+  /* Одна строка: размер подбирает QuestionView (24 → 18 px), иначе перенос (decisions.md). */
+  overflow: hidden;
 }
 
 .example {
   margin: var(--sp-2) 0 0;
   font: var(--fs-caption) var(--font);
   color: var(--text-2);
+  text-align: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
