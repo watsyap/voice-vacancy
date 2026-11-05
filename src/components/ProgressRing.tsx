@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useEffect, useRef, type CSSProperties, type MutableRefObject } from 'react';
 import type { Q } from '../../shared/types';
 import { QS } from '../../shared/types';
 import { useReducedMotion } from '../hooks/useReducedMotion';
@@ -24,14 +24,23 @@ type Props = {
   /** Сегмент текущего вопроса; null — текущего нет (S1). */
   current: Q | null;
   mode: RingMode;
-  /** Громкость 0–1 (S4). */
-  level?: number;
+  /** Громкость 0–1 (S4), без сглаживания; ref, чтобы не перерисовывать React каждый кадр. */
+  levelRef?: MutableRefObject<number>;
+  /** S24: громкости нет, импульс на каждый новый фрагмент распознавания. */
+  pulse?: boolean;
+  /** Меняется на каждом фрагменте распознавания. */
+  pulseKey?: string | number;
   size?: 'full' | 'mini';
   centerLabel?: string;
   onCenter?: () => void;
   onSegment?: (q: Q) => void;
   segmentsClickable?: boolean;
 };
+
+// Сглаживание громкости — spec §8: атака 50 мс, спад 150 мс.
+const ATTACK_MS = 50;
+const RELEASE_MS = 150;
+const PULSE_MS = 300;
 
 const rad = (deg: number): number => (deg * Math.PI) / 180;
 const angleOf = (seg: number, i: number): number => -90 + seg * 90 + GAP_DEG / 2 + ((i + 0.5) * SPAN_DEG) / PER_SEGMENT;
@@ -67,7 +76,9 @@ export function ProgressRing({
   segments,
   current,
   mode,
-  level = 0,
+  levelRef,
+  pulse = false,
+  pulseKey,
   size = 'full',
   centerLabel,
   onCenter,
@@ -75,32 +86,75 @@ export function ProgressRing({
   segmentsClickable = false,
 }: Props) {
   const reduced = useReducedMotion();
-  const lvl = Math.min(1, Math.max(0, level));
+  const svg = useRef<SVGSVGElement>(null);
+  const liveLines = (): SVGLineElement[] => Array.from(svg.current?.querySelectorAll<SVGLineElement>('line[data-live]') ?? []);
+
+  // rAF: длина штрихов текущего сегмента 8 → 8 + 12·RMS (reduce: opacity 0.5–1).
+  useEffect(() => {
+    if (mode !== 'listen' || pulse || !levelRef) return;
+    let raf = 0;
+    let smooth = 0;
+    let prev = performance.now();
+    const frame = (t: number) => {
+      const dt = t - prev;
+      prev = t;
+      const target = levelRef.current;
+      const tau = target > smooth ? ATTACK_MS : RELEASE_MS;
+      smooth += (target - smooth) * (1 - Math.exp(-dt / tau));
+      for (const el of liveLines()) {
+        const a = Number(el.dataset.angle);
+        if (reduced) {
+          el.style.opacity = String(0.5 + 0.5 * smooth);
+        } else {
+          const r = R_INNER + STROKE_H + STROKE_H_EXTRA * smooth;
+          el.setAttribute('x2', String(C + r * Math.cos(a)));
+          el.setAttribute('y2', String(C + r * Math.sin(a)));
+        }
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(raf);
+      for (const el of liveLines()) {
+        const a = Number(el.dataset.angle);
+        el.style.opacity = '';
+        el.setAttribute('x2', String(C + (R_INNER + STROKE_H) * Math.cos(a)));
+        el.setAttribute('y2', String(C + (R_INNER + STROKE_H) * Math.sin(a)));
+      }
+    };
+  }, [mode, pulse, levelRef, reduced]);
+
+  // S24: импульс по всем штрихам сегмента, 300 мс ease-out (spec §8).
+  useEffect(() => {
+    if (!pulse || mode !== 'listen' || pulseKey === undefined) return;
+    for (const el of liveLines()) {
+      el.animate?.([{ opacity: 0.35 }, { opacity: 1 }], { duration: PULSE_MS, easing: 'ease-out' });
+    }
+  }, [pulse, mode, pulseKey]);
 
   return (
     <div className={`${styles.ring} ${size === 'mini' ? styles.mini : ''}`} data-mode={mode}>
-      <svg viewBox={`0 0 ${VIEW} ${VIEW}`} className={styles.svg} aria-hidden={!segmentsClickable}>
+      <svg ref={svg} viewBox={`0 0 ${VIEW} ${VIEW}`} className={styles.svg} aria-hidden={!segmentsClickable}>
         {QS.map((q, seg) => {
           const isCurrent = q === current;
           return (
             <g key={q} className={styles.segment}>
               {Array.from({ length: PER_SEGMENT }, (_, i) => {
                 const kind = strokeKind(segments[q], i, isCurrent);
-                const live = isCurrent && kind === 'active' && mode === 'listen';
-                const h = live && !reduced ? STROKE_H + STROKE_H_EXTRA * lvl : STROKE_H;
+                const isLive = isCurrent && kind === 'active' && mode === 'listen';
                 const a = rad(angleOf(seg, i));
-                const style = {
-                  '--i': i,
-                  ...(live && reduced ? { opacity: 0.5 + 0.5 * lvl } : null),
-                } as CSSProperties;
+                const style = { '--i': i } as CSSProperties;
                 return (
                   <line
                     key={i}
+                    data-live={isLive || undefined}
+                    data-angle={a}
                     className={`${styles.stroke} ${styles[kind]} ${isCurrent ? styles.current : ''}`}
                     x1={C + R_INNER * Math.cos(a)}
                     y1={C + R_INNER * Math.sin(a)}
-                    x2={C + (R_INNER + h) * Math.cos(a)}
-                    y2={C + (R_INNER + h) * Math.sin(a)}
+                    x2={C + (R_INNER + STROKE_H) * Math.cos(a)}
+                    y2={C + (R_INNER + STROKE_H) * Math.sin(a)}
                     style={style}
                   />
                 );

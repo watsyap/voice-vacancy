@@ -1,0 +1,17 @@
+.field {
+  display: block;
+  width: 100%;
+  min-height: calc(var(--sp-12));
+  max-height: calc(6 * 1.5em + 2 * var(--sp-3));
+  padding: var(--sp-3) var(--sp-4);
+  border: var(--r-stroke) solid var(--ring-idle);
+  border-radius: var(--r-field);
+  background: var(--surface);
+  resize: none;
+  overflow-y: auto;
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 0;
+}

@@ -2,6 +2,8 @@
 .screen {
   display: grid;
   grid-template-rows: auto auto auto 1fr;
+  /* minmax(0, 1fr): длинный пример (nowrap) не раздвигает колонку шире экрана. */
+  grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: var(--sp-8);
   max-width: var(--content-w);

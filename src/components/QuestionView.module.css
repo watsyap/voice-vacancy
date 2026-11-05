@@ -5,11 +5,7 @@
 .question {
   margin: 0;
   font: var(--fw-question) var(--fs-question) var(--font);
-  /* До 2 строк (spec §4.1). */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  /* spec §4.1 «до 2 строк» не обрезаем: на 360 px Q1 и Q3 занимают 3 строки (вопрос в decisions.md). */
 }
 
 .example {

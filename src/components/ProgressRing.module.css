@@ -55,8 +55,7 @@
 }
 
 /* Текущий: «дыхание» opacity 0.6↔1, 2 с (spec §8). */
-[data-mode='listen'] .current.active,
-[data-mode='idle'] .current.active {
+[data-mode='listen'] .current.active {
   animation: breath var(--t-breath) var(--ease-io) infinite;
 }
 
@@ -110,7 +109,11 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* Без вращения и волн: анализ — тем же «дыханием» (spec §8). */
+  /* Громкость управляет opacity — «дыхание» в записи выключено, чтобы не перебивать её. */
+  [data-mode='listen'] .current.active {
+    animation: none;
+  }
+  /* Без вращения и волн: анализ — «дыханием» (spec §8). */
   [data-mode='analyze'] .current.active {
     animation: breath var(--t-breath) var(--ease-io) infinite;
     animation-delay: 0s;

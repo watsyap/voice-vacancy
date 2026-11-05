@@ -14,6 +14,9 @@ const ok = (slots: AnalyzeRes['slots'], followup: string | null = null, off_topi
 const inS9 = (text = 'ревью кода и планирование спринта каждый день'): State =>
   run(initialState(), { type: 'START_TEXT' }, { type: 'SUBMIT_TEXT', text });
 
+/** Q1 в S4, голосовой режим. */
+const voiceS4 = (): State => run(initialState(), { type: 'START' }, { type: 'MIC_OK' });
+
 const ONE_TASK = ok({ tasks: ['ревью кода'] }, 'А какие ещё задачи будут каждый день?');
 const TWO_TASKS = ok({ tasks: ['ревью кода', 'планирование спринта'] });
 
@@ -88,7 +91,10 @@ describe('S11 — уточнение', () => {
   });
 
   it('уточнение голосом: S11 остаётся S11, «Готово» дописывает', () => {
-    const s = run(inS9(), ONE_TASK, { type: 'SPEECH_FINAL', text: 'созвоны' }, { type: 'DONE' });
+    const s9 = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода каждый день с утра' }, { type: 'DONE' });
+    const s11 = run(s9, ONE_TASK, { type: 'SPEECH_FINAL', text: 'созвоны' });
+    expect(s11.phase).toBe('S11');
+    const s = run(s11, { type: 'DONE' });
     expect(s.phase).toBe('S9');
     expect(s.answers[1].transcript.endsWith(' созвоны')).toBe(true);
   });
@@ -219,6 +225,17 @@ describe('недопустимые события', () => {
     { type: 'RERECORD' },
     { type: 'NEXT' },
     { type: 'OPEN_SEGMENT', q: 2 as Q },
+    { type: 'MIC_DENIED' },
+    { type: 'MIC_MISSING' },
+    { type: 'SPEECH_UNSUPPORTED' },
+    { type: 'SILENCE_START' },
+    { type: 'SILENCE_END' },
+    { type: 'NO_SPEECH' },
+    { type: 'PAUSE' },
+    { type: 'RESUME' },
+    { type: 'TAB_HIDDEN' },
+    { type: 'SET_INPUT_MODE', mode: 'text' },
+    { type: 'DRAFT_EDIT', text: 'x' },
   ];
 
   it('по таблице ALLOWED: событие вне фазы возвращает тот же state', () => {
@@ -235,5 +252,143 @@ describe('недопустимые события', () => {
     for (const type of ['DONE', 'NEXT', 'SKIP', 'RERECORD'] as const) {
       expect(reducer(s, { type } as Event)).toBe(s);
     }
+  });
+});
+
+describe('A5.2 — голос и текстовый режим', () => {
+  it('S2: разрешил → S4 голосом', () => {
+    const s = voiceS4();
+    expect(s.phase).toBe('S4');
+    expect(s.inputMode).toBe('voice');
+  });
+
+  it('S2 → S3a / S3b / S3c: текстовый режим с причиной', () => {
+    const cases = [
+      ['MIC_DENIED', 'S3a'],
+      ['MIC_MISSING', 'S3b'],
+      ['SPEECH_UNSUPPORTED', 'S3c'],
+    ] as const;
+    for (const [type, block] of cases) {
+      const s = run(initialState(), { type: 'START' }, { type });
+      expect(s.phase).toBe('S4');
+      expect(s.inputMode).toBe('text');
+      expect(s.voiceBlock).toBe(block);
+    }
+  });
+
+  it('S3a: голос обратно не включается', () => {
+    const s = run(initialState(), { type: 'START' }, { type: 'MIC_DENIED' });
+    expect(reducer(s, { type: 'SET_INPUT_MODE', mode: 'voice' })).toBe(s);
+  });
+
+  it('микрофон отозван во время записи → текст, сказанное в поле', () => {
+    const s = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью' }, { type: 'SPEECH_INTERIM', text: 'кода' }, {
+      type: 'MIC_DENIED',
+    });
+    expect(s.inputMode).toBe('text');
+    expect(s.draft).toBe('ревью кода');
+  });
+
+  it('AC-4.5: финальный текст копится между сессиями распознавания', () => {
+    const s = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода' }, { type: 'SPEECH_FINAL', text: 'и созвоны' });
+    expect(s.draft).toBe('ревью кода и созвоны');
+  });
+
+  it('S5: 5 с без слов → пауза; RESUME → S4', () => {
+    const s = run(voiceS4(), { type: 'SILENCE_START' });
+    expect(s.phase).toBe('S5');
+    expect(run(s, { type: 'RESUME' }).phase).toBe('S4');
+  });
+
+  it('S6: «не разобрал» считается подряд, речь сбрасывает счётчик', () => {
+    let s = run(voiceS4(), { type: 'NO_SPEECH' });
+    expect(s.phase).toBe('S6');
+    s = run(s, { type: 'RESUME' }, { type: 'NO_SPEECH' });
+    expect(s.noSpeechCount).toBe(2);
+    s = run(s, { type: 'RESUME' }, { type: 'SPEECH_FINAL', text: 'ревью' });
+    expect(s.noSpeechCount).toBe(0);
+  });
+
+  it('AC-4.3: 4 с тишины после речи → проверка min', () => {
+    const short = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода' }, { type: 'SILENCE_END' });
+    expect(short.phase).toBe('S7');
+    const long = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода и планирование спринта' }, {
+      type: 'SILENCE_END',
+    });
+    expect(long.phase).toBe('S9');
+  });
+
+  it('SILENCE_END без текста ничего не делает', () => {
+    const s = voiceS4();
+    expect(reducer(s, { type: 'SILENCE_END' })).toBe(s);
+  });
+
+  it('S7: запись продолжается и дописывает', () => {
+    const s = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода' }, { type: 'DONE' }, {
+      type: 'SPEECH_FINAL',
+      text: 'и планирование спринта',
+    });
+    expect(s.phase).toBe('S4');
+    expect(s.draft).toBe('ревью кода и планирование спринта');
+  });
+
+  it('S8: пауза сохраняет текст, «Перезаписать» сбрасывает, «Готово» → S9', () => {
+    const paused = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода и планирование спринта' }, { type: 'PAUSE' });
+    expect(paused.phase).toBe('S8');
+    expect(paused.draft).toBe('ревью кода и планирование спринта');
+    expect(run(paused, { type: 'RERECORD' })).toMatchObject({ phase: 'S4', draft: '' });
+    expect(run(paused, { type: 'DONE' }).phase).toBe('S9');
+  });
+
+  it('S8: поздний финальный фрагмент после паузы не теряется', () => {
+    const s = run(voiceS4(), { type: 'SPEECH_INTERIM', text: 'ревью' }, { type: 'PAUSE' }, {
+      type: 'SPEECH_FINAL',
+      text: 'ревью кода',
+    });
+    expect(s.phase).toBe('S8');
+    expect(s.draft).toBe('ревью кода');
+  });
+
+  it('RESUME фиксирует хвост промежуточного текста', () => {
+    const s = run(voiceS4(), { type: 'SPEECH_INTERIM', text: 'ревью' }, { type: 'PAUSE' }, { type: 'RESUME' });
+    expect(s).toMatchObject({ phase: 'S4', draft: 'ревью', interim: '' });
+  });
+
+  it('S22: скрытие вкладки → S8 с отметкой', () => {
+    const s = run(voiceS4(), { type: 'TAB_HIDDEN' });
+    expect(s).toMatchObject({ phase: 'S8', tabPaused: true });
+    expect(run(s, { type: 'RESUME' }).tabPaused).toBe(false);
+  });
+
+  it('голос → текст → голос сохраняет сказанное', () => {
+    let s = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода' }, { type: 'SET_INPUT_MODE', mode: 'text' });
+    expect(s).toMatchObject({ inputMode: 'text', draft: 'ревью кода', phase: 'S4' });
+    s = run(s, { type: 'DRAFT_EDIT', text: 'ревью кода и созвоны' }, { type: 'SET_INPUT_MODE', mode: 'voice' });
+    expect(s).toMatchObject({ inputMode: 'voice', draft: 'ревью кода и созвоны', phase: 'S4' });
+  });
+
+  it('пауза в уточнении возвращает в S11; «Пропустить уточнение» доступно, «Пропустить» — нет', () => {
+    const s11 = run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода каждый день с утра' }, { type: 'DONE' }, ONE_TASK);
+    const paused = run(s11, { type: 'PAUSE' });
+    expect(paused.phase).toBe('S8');
+    expect(run(paused, { type: 'RESUME' }).phase).toBe('S11');
+    expect(reducer(run(s11, { type: 'SILENCE_START' }), { type: 'SKIP' }).phase).toBe('S5');
+    expect(run(paused, { type: 'SKIP_FOLLOWUP' }).phase).toBe('S10p');
+  });
+
+  it('«Пропустить уточнение» вне уточнения ничего не делает', () => {
+    const s = run(voiceS4(), { type: 'PAUSE' });
+    expect(reducer(s, { type: 'SKIP_FOLLOWUP' })).toBe(s);
+  });
+
+  it('S24: VOLUME_UNAVAILABLE в любой фазе → pulse', () => {
+    expect(reducer(initialState(), { type: 'VOLUME_UNAVAILABLE' }).volumeMode).toBe('pulse');
+    expect(reducer(voiceS4(), { type: 'VOLUME_UNAVAILABLE' }).phase).toBe('S4');
+  });
+
+  it('события распознавания в текстовом режиме игнорируются', () => {
+    const s = run(initialState(), { type: 'START_TEXT' });
+    expect(reducer(s, { type: 'SPEECH_FINAL', text: 'x' })).toBe(s);
+    expect(reducer(s, { type: 'PAUSE' })).toBe(s);
   });
 });

@@ -33,6 +33,8 @@ export type State = {
   interim: string;
   /** Запись идёт как ответ на уточнение: «Готово» дописывает draft к транскрипту (spec §5). */
   inFollowup: boolean;
+  /** S8 по скрытию вкладки (S22): другая подпись. */
+  tabPaused: boolean;
   inputMode: 'voice' | 'text';
   voiceBlock: null | 'S3a' | 'S3b' | 'S3c';
   offline: boolean;
@@ -60,6 +62,7 @@ export const initialState = (): State => ({
   draft: '',
   interim: '',
   inFollowup: false,
+  tabPaused: false,
   inputMode: 'voice',
   voiceBlock: null,
   offline: false,
@@ -73,19 +76,28 @@ export const initialState = (): State => ({
 const RECORDING: Phase[] = ['S4', 'S5', 'S6', 'S7', 'S8'];
 const RESOLVED: Phase[] = ['S10', 'S10p', 'S12', 'S14'];
 
-/** Разрешённые пары phase × event. Всё остальное — тот же state (AGENTS.md §3). */
+/** Разрешённые пары phase × event. Всё остальное — тот же state (AGENTS.md §3).
+ *  VOLUME_UNAVAILABLE — оверлей S24, допустим в любой фазе. */
+const LISTEN_EVENTS: readonly EventType[] = [
+  'SPEECH_INTERIM', 'SPEECH_FINAL', 'SILENCE_START', 'SILENCE_END', 'NO_SPEECH', 'PAUSE', 'TAB_HIDDEN',
+  'DONE', 'SUBMIT_TEXT', 'DRAFT_EDIT', 'SET_INPUT_MODE', 'MIC_DENIED', 'MIC_MISSING',
+];
+const PAUSED_EVENTS: readonly EventType[] = [
+  'SPEECH_INTERIM', 'SPEECH_FINAL', 'RESUME', 'DONE', 'SET_INPUT_MODE', 'MIC_DENIED', 'MIC_MISSING',
+];
+
 export const ALLOWED: Record<Phase, readonly EventType[]> = {
   S1: ['START', 'START_TEXT'],
-  S2: ['MIC_OK'],
-  S4: ['SPEECH_INTERIM', 'SPEECH_FINAL', 'DONE', 'SUBMIT_TEXT', 'SKIP'],
-  S5: ['SPEECH_INTERIM', 'SPEECH_FINAL', 'DONE', 'SKIP'],
-  S6: ['SPEECH_INTERIM', 'SPEECH_FINAL', 'DONE', 'SKIP'],
-  S7: ['SPEECH_INTERIM', 'SPEECH_FINAL', 'DONE', 'SUBMIT_TEXT', 'SKIP'],
-  S8: ['DONE', 'RERECORD'],
+  S2: ['MIC_OK', 'MIC_DENIED', 'MIC_MISSING', 'SPEECH_UNSUPPORTED'],
+  S4: [...LISTEN_EVENTS, 'SKIP'],
+  S5: [...PAUSED_EVENTS, 'SKIP', 'SKIP_FOLLOWUP'],
+  S6: [...PAUSED_EVENTS, 'SKIP', 'SKIP_FOLLOWUP'],
+  S7: [...LISTEN_EVENTS, 'SKIP'],
+  S8: [...PAUSED_EVENTS, 'RERECORD', 'SKIP_FOLLOWUP'],
   S9: ['ANALYZE_OK', 'ANALYZE_FAIL'],
   S10: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
   S10p: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
-  S11: ['SPEECH_INTERIM', 'SPEECH_FINAL', 'DONE', 'SUBMIT_TEXT', 'SKIP_FOLLOWUP'],
+  S11: [...LISTEN_EVENTS, 'SKIP_FOLLOWUP'],
   S12: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
   S13: [],
   S14: ['NEXT', 'OPEN_SEGMENT'],
@@ -122,6 +134,23 @@ export function resolvedPhase(a: Answer): Phase {
   }
 }
 
+/** Фаза записи: обычный ответ — S4, ответ на уточнение — S11 (то же S4-поведение, spec §7). */
+const listenPhase = (s: State): Phase => (s.inFollowup ? 'S11' : 'S4');
+
+/** Голос можно включить: API есть и не заблокирован (S3a–S3c). */
+const voiceAllowed = (s: State): boolean => s.voiceBlock === null;
+
+/** Остановить запись в текстовый режим, сохранив сказанное (flow.md §3). */
+const toText = (s: State, block: State['voiceBlock'] = s.voiceBlock): State => ({
+  ...s,
+  inputMode: 'text',
+  voiceBlock: block,
+  draft: join(s.draft, s.interim),
+  interim: '',
+  tabPaused: false,
+  phase: listenPhase(s),
+});
+
 const firstEmpty = (s: State): Q | null => QS.find((q) => s.answers[q].status === 'empty') ?? null;
 
 /** Открыть вопрос для записи: новая попытка с чистым черновиком. */
@@ -133,6 +162,7 @@ const openQuestion = (s: State, q: Q): State => ({
   draft: '',
   interim: '',
   inFollowup: false,
+  tabPaused: false,
   noSpeechCount: 0,
 });
 
@@ -142,13 +172,14 @@ function finish(s: State, text: string): State {
     // Ответ на уточнение дописывается к исходному (spec §5, AC-11.2). Пустой — предложено: игнорировать.
     if (!text.trim()) return s;
     const merged = join(s.answers[s.q].transcript, text);
-    return { ...setAnswer(s, s.q, { transcript: merged }), phase: 'S9', draft: '', interim: '', inFollowup: false };
+    return { ...setAnswer(s, s.q, { transcript: merged }), phase: 'S9', draft: '', interim: '', inFollowup: false, tabPaused: false };
   }
-  if (!meetsMin(s.q, text)) return { ...s, phase: 'S7', draft: text, interim: '' };
-  return { ...setAnswer(s, s.q, { transcript: text.trim() }), phase: 'S9', draft: '', interim: '' };
+  if (!meetsMin(s.q, text)) return { ...s, phase: 'S7', draft: text, interim: '', tabPaused: false };
+  return { ...setAnswer(s, s.q, { transcript: text.trim() }), phase: 'S9', draft: '', interim: '', tabPaused: false };
 }
 
 export function reducer(s: State, e: Event): State {
+  if (e.type === 'VOLUME_UNAVAILABLE') return s.volumeMode === 'pulse' ? s : { ...s, volumeMode: 'pulse' };
   if (!ALLOWED[s.phase].includes(e.type)) return s;
 
   switch (e.type) {
@@ -159,19 +190,64 @@ export function reducer(s: State, e: Event): State {
       return { ...openQuestion(s, 1), inputMode: 'text' };
 
     case 'MIC_OK':
-      return openQuestion(s, s.q);
+      return { ...openQuestion(s, s.q), inputMode: 'voice' };
 
-    case 'SPEECH_INTERIM':
-      return { ...s, interim: e.text, phase: s.phase === 'S11' ? 'S11' : 'S4' };
+    case 'MIC_DENIED':
+      return s.phase === 'S2' ? toText(openQuestion(s, s.q), 'S3a') : toText(s, 'S3a');
 
-    case 'SPEECH_FINAL':
+    case 'MIC_MISSING':
+      return s.phase === 'S2' ? toText(openQuestion(s, s.q), 'S3b') : toText(s, 'S3b');
+
+    case 'SPEECH_UNSUPPORTED':
+      return toText(openQuestion(s, s.q), 'S3c');
+
+    case 'SPEECH_INTERIM': {
+      if (s.inputMode !== 'voice') return s;
+      // В паузе дописываем хвост распознавания, но фазу не меняем.
+      const paused = s.phase === 'S8' || s.phase === 'S5' || s.phase === 'S6';
+      return { ...s, interim: e.text, phase: paused ? s.phase : listenPhase(s) };
+    }
+
+    case 'SPEECH_FINAL': {
+      if (s.inputMode !== 'voice') return s;
+      const paused = s.phase === 'S8' || s.phase === 'S5' || s.phase === 'S6';
       return {
         ...s,
         draft: join(s.draft, e.text),
         interim: '',
         noSpeechCount: 0,
-        phase: s.phase === 'S11' ? 'S11' : 'S4',
+        phase: paused ? s.phase : listenPhase(s),
       };
+    }
+
+    case 'SILENCE_START':
+      // 5 с без слов → пауза (flow.md §3 S5). Если текст уже есть — тоже пауза, а не отправка (предложено).
+      return s.inputMode === 'voice' ? { ...s, phase: 'S5' } : s;
+
+    case 'SILENCE_END':
+      // 4 с тишины после речи → конец ответа (AC-4.3).
+      return s.inputMode === 'voice' && join(s.draft, s.interim) ? finish(s, join(s.draft, s.interim)) : s;
+
+    case 'NO_SPEECH':
+      return s.inputMode === 'voice' ? { ...s, phase: 'S6', noSpeechCount: s.noSpeechCount + 1 } : s;
+
+    case 'PAUSE':
+      return s.inputMode === 'voice' ? { ...s, phase: 'S8', tabPaused: false } : s;
+
+    case 'TAB_HIDDEN':
+      return s.inputMode === 'voice' ? { ...s, phase: 'S8', tabPaused: true } : s;
+
+    case 'RESUME':
+      // Хвост промежуточного текста фиксируем: новая сессия распознавания его не вернёт.
+      return { ...s, phase: listenPhase(s), draft: join(s.draft, s.interim), interim: '', tabPaused: false };
+
+    case 'SET_INPUT_MODE':
+      if (e.mode === 'text') return s.inputMode === 'text' ? s : toText(s);
+      if (s.inputMode === 'voice' || !voiceAllowed(s)) return s;
+      return { ...s, inputMode: 'voice', phase: listenPhase(s), noSpeechCount: 0 };
+
+    case 'DRAFT_EDIT':
+      return s.inputMode === 'text' ? { ...s, draft: e.text } : s;
 
     case 'DONE':
       return finish(s, join(s.draft, s.interim));
@@ -201,9 +277,12 @@ export function reducer(s: State, e: Event): State {
       };
 
     case 'SKIP_FOLLOWUP':
-      return { ...s, phase: 'S10p', inFollowup: false, draft: '', interim: '' };
+      if (!s.inFollowup) return s;
+      return { ...s, phase: 'S10p', inFollowup: false, draft: '', interim: '', tabPaused: false };
 
     case 'SKIP': {
+      // В уточнении «Пропустить» вопрос нет (spec §4.1).
+      if (s.inFollowup) return s;
       const skipped = setAnswer(s, s.q, { ...emptyAnswer(), status: 'skipped' });
       if (QS.every((q) => skipped.answers[q].status === 'skipped')) {
         return { ...skipped, phase: 'S20', draft: '', interim: '' };
@@ -236,4 +315,7 @@ export function reducer(s: State, e: Event): State {
 }
 
 export const isRecording = (p: Phase): boolean => RECORDING.includes(p) || p === 'S11';
+/** Идёт захват голоса (распознавание и громкость активны). */
+export const isListening = (s: State): boolean =>
+  s.inputMode === 'voice' && (s.phase === 'S4' || s.phase === 'S7' || s.phase === 'S11');
 export const isResolved = (p: Phase): boolean => RESOLVED.includes(p);

@@ -1,0 +1,20 @@
+/* 3 строки по низу: новое снизу, старое уходит вверх под градиент. */
+.box {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  max-height: calc(3 * 1.5em);
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 1.5em);
+}
+
+.text {
+  margin: 0;
+  text-align: center;
+  color: var(--text);
+}
+
+.interim {
+  color: var(--text-2);
+}
