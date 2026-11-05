@@ -1,0 +1,10 @@
+.status {
+  margin: 0;
+  min-height: calc(var(--sp-6));
+  text-align: center;
+  color: var(--text);
+}
+
+.status[data-tone='error'] {
+  color: var(--danger);
+}

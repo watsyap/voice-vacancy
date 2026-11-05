@@ -1,0 +1,36 @@
+/* Дизайн-токены — AGENTS.md §4. Единственное место с «сырыми» значениями.
+   Длительности и easing — spec §8; остальное — предложено. */
+:root {
+  /* цвет — предложено */
+  --bg: #FFFFFF; --surface: #F5F5F7; --text: #111114; --text-2: #6E6E73;
+  --accent: #0A84FF; --danger: #D70015; --focus: #0A84FF;
+  --ring-idle: #D2D2D7; --ring-active: #111114; --ring-done: #34C759;
+  /* типографика — предложено */
+  --font: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --fs-question: 24px/1.3; --fs-body: 16px/1.5; --fs-caption: 14px/1.4; --fs-label: 12px/1.3;
+  --fw-question: 600; --fw-body: 400;
+  /* отступы (шаг 4) и радиусы — предложено */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-6: 24px; --sp-8: 32px; --sp-12: 48px;
+  --r-btn: 12px; --r-field: 12px; --r-stroke: 1px;
+  /* кольцо — spec §8 */
+  --ring-d: 240px; --ring-d-mobile: 200px; --ring-d-mini: 48px;
+  --stroke-w: 2px; --stroke-h: 8px; --stroke-h-max: 20px;
+  /* время — spec §8 */
+  --t-attack: 50ms; --t-release: 150ms; --t-pulse: 300ms;
+  --t-analyze-cycle: 1200ms; --t-gen-cycle: 1600ms; --t-fill: 400ms;
+  --t-question: 250ms; --t-close: 600ms; --t-breath: 2000ms;
+  --t-ring-out: 200ms; --t-fade-reduced: 150ms;
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1); --ease-out: ease-out; --ease-io: ease-in-out;
+  /* прочее — предложено */
+  --content-w: 560px; --opacity-raw: 0.45;
+}
+@media (prefers-color-scheme: dark) {
+  :root { /* предложено */
+    --bg: #000000; --surface: #1C1C1E; --text: #F5F5F7; --text-2: #98989D;
+    --accent: #0A84FF; --danger: #FF453A;
+    --ring-idle: #3A3A3C; --ring-active: #F5F5F7; --ring-done: #30D158;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :root { --t-question: var(--t-fade-reduced); --t-fill: 0ms; --t-close: var(--t-fade-reduced); }
+}

@@ -1,0 +1,50 @@
+.actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-4);
+  width: 100%;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-3);
+}
+
+.primary,
+.secondary {
+  min-height: var(--sp-12);
+  padding: 0 var(--sp-6);
+  border-radius: var(--r-btn);
+  cursor: pointer;
+}
+
+.primary {
+  border: 0;
+  background: var(--text);
+  color: var(--bg);
+  font-weight: var(--fw-question);
+}
+
+.secondary {
+  border: var(--r-stroke) solid var(--ring-idle);
+  background: transparent;
+}
+
+.links {
+  display: flex;
+  gap: var(--sp-6);
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: var(--sp-2);
+  color: var(--text-2);
+  font: var(--fs-caption) var(--font);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
