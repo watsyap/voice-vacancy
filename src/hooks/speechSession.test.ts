@@ -128,11 +128,12 @@ describe('SpeechSession', () => {
     expect(types()).toEqual(['NO_SPEECH']);
   });
 
-  it('ошибки: not-allowed → MIC_DENIED, audio-capture → MIC_MISSING, no-speech → NO_SPEECH', () => {
+  it('ошибки: not-allowed → MIC_DENIED, audio-capture → MIC_MISSING, no-speech → NO_SPEECH, network → OFFLINE', () => {
     for (const [error, type] of [
       ['not-allowed', 'MIC_DENIED'],
       ['audio-capture', 'MIC_MISSING'],
       ['no-speech', 'NO_SPEECH'],
+      ['network', 'OFFLINE'],
     ] as const) {
       events = [];
       session().start();

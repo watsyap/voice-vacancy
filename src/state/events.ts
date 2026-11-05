@@ -1,4 +1,5 @@
 import type { AnalyzeRes, Q } from '../../shared/types';
+import type { Session } from './session';
 
 // События машины — AGENTS.md §3. Остальные (генерация, сеть, сессия) добавляются по этапам A5.
 export type Event =
@@ -44,6 +45,16 @@ export type Event =
   /** X-Demo от /api/generate. */
   | { type: 'DEMO_SEEN' }
   | { type: 'EDIT_VACANCY'; text: string }
-  | { type: 'RESET' };
+  | { type: 'RESET' }
+  /** Сессия из localStorage при старте (flow.md §5, spec §7 S23). */
+  | { type: 'RESTORE'; session: Session }
+  /** «Продолжить» в S23 — это жест для микрофона (flow.md §3). */
+  | { type: 'CONTINUE' }
+  | { type: 'OFFLINE' }
+  | { type: 'ONLINE' }
+  /** Ответ из очереди S21 проанализирован: без уточнения, неполный → S10′ (spec §7 S21). */
+  | { type: 'QUEUE_ANALYZED'; q: Q; res: AnalyzeRes }
+  /** Анализ ответа из очереди не удался: ответ остаётся raw (генерация разберёт). */
+  | { type: 'QUEUE_FAILED'; q: Q };
 
 export type EventType = Event['type'];

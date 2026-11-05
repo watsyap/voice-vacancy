@@ -28,7 +28,8 @@ type SpeechEvent = Extract<
       | 'NO_SPEECH'
       | 'MIC_DENIED'
       | 'MIC_MISSING'
-      | 'VOLUME_UNAVAILABLE';
+      | 'VOLUME_UNAVAILABLE'
+      | 'OFFLINE';
   }
 >;
 
@@ -144,8 +145,12 @@ export class SpeechSession {
       case 'no-speech':
         if (!this.heard) this.halt({ type: 'NO_SPEECH' });
         return;
+      case 'network':
+        // Chrome распознаёт на сервере: без сети голоса нет (flow.md §3 S21).
+        this.halt({ type: 'OFFLINE' });
+        return;
       default:
-        // aborted, network (S21 — этап A5.6) и прочее: решает onend.
+        // aborted и прочее: решает onend.
         return;
     }
   }

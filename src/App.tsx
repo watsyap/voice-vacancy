@@ -12,6 +12,7 @@ import { Understood } from './components/Understood';
 import { VacancyEditor } from './components/VacancyEditor';
 import { CONFIG } from './config';
 import { useEffects } from './hooks/useEffects';
+import { useSession } from './hooks/useSession';
 import { speechSupported, useSpeech } from './hooks/useSpeech';
 import { useVolume } from './hooks/useVolume';
 import { rawSavedText, understoodText } from './lib/understood';
@@ -21,6 +22,7 @@ import styles from './App.module.css';
 
 // Тексты — flow.md §3 и spec §4. Не придумывать новые.
 const INTRO = '4 вопроса о будущем сотруднике, ~3 минуты. Отвечайте голосом — микрофон нужен только для записи';
+const OFFLINE_TEXT = 'Нет сети. Ответы сохраняются, разберу их, когда сеть вернётся';
 const VOICE_BLOCK: Record<NonNullable<State['voiceBlock']>, string> = {
   S3a: 'Микрофон заблокирован. Включить: значок слева от адреса → Микрофон → Разрешить, затем обновите страницу',
   S3b: 'Микрофон не найден — отвечайте текстом',
@@ -53,7 +55,13 @@ function statusOf(s: State): string {
   if (s.phase === 'S2') return 'Разрешите доступ к микрофону';
   if (s.phase === 'S9') return 'Разбираю ответ';
   if (s.phase === 'S20') return 'Нужен хотя бы один ответ, чтобы собрать вакансию';
+  if (s.phase === 'S23') return `Продолжим с вопроса ${s.q}`;
+  if ((s.phase === 'S16' || s.phase === 'S17') && s.offline) return 'Соберу вакансию, когда вернётся сеть';
   if (s.phase === 'S17') return 'Ещё немного…';
+  // S21: строка о сети — поверх подписей вопроса, кроме подсказки S7 и уточнения S11.
+  if (s.offline && s.phase !== 'S7' && s.phase !== 'S11' && (isRecording(s.phase) || isResolved(s.phase) || s.phase === 'S15')) {
+    return OFFLINE_TEXT;
+  }
   if (s.phase === 'S18') return 'Не получилось собрать вакансию. Ответы сохранены';
   if (s.phase === 'S18p') return 'Текст не дописан';
   if (isResolved(s.phase) || s.phase === 'S15') return answerText(s);
@@ -83,7 +91,7 @@ const SEGMENT_PHASES: State['phase'][] = ['S10', 'S10p', 'S12', 'S14', 'S20'];
 
 type ActionSet = { primary?: Action; secondary?: Action; links?: [] | [Action] | [Action, Action] };
 
-function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): ActionSet {
+function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean, reset: Action): ActionSet {
   const ev = (e: Event) => () => dispatch(e);
   const links = (...xs: (Action | false)[]) => xs.filter((x): x is Action => Boolean(x)).slice(0, 2) as ActionSet['links'];
   const done: Action = { label: 'Готово', onClick: ev({ type: 'DONE' }) };
@@ -109,6 +117,8 @@ function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): Actio
       return s.q === 4 ? { primary: build } : {};
     case 'S15':
       return { primary: next, secondary: rerecord };
+    case 'S23':
+      return { primary: { label: 'Продолжить', onClick: ev({ type: 'CONTINUE' }) }, links: [reset] };
     case 'S18':
       return { primary: { label: 'Повторить', onClick: ev({ type: 'GENERATE' }) } };
     case 'S18p':
@@ -148,6 +158,19 @@ function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): Actio
 export function App() {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
   useEffects(state, dispatch);
+  useSession(state, dispatch);
+
+  // «Начать заново» в S23 — двойное подтверждение без попапа, 3 с (spec §4.2).
+  const [confirmReset, setConfirmReset] = useState(false);
+  useEffect(() => {
+    if (!confirmReset) return;
+    const t = setTimeout(() => setConfirmReset(false), CONFIG.confirmResetMs);
+    return () => clearTimeout(t);
+  }, [confirmReset]);
+  const resetLink: Action = {
+    label: confirmReset ? 'Удалить текущую? Нажмите ещё раз' : 'Начать заново',
+    onClick: () => (confirmReset ? dispatch({ type: 'RESET' }) : setConfirmReset(true)),
+  };
 
   const listening = isListening(state);
   const onVolumeUnavailable = useCallback(() => dispatch({ type: 'VOLUME_UNAVAILABLE' }), []);
@@ -190,7 +213,7 @@ export function App() {
 
   const isIntro = state.phase === 'S1';
   const recording = isRecording(state.phase);
-  const voiceOk = state.voiceBlock === null && speechSupported();
+  const voiceOk = state.voiceBlock === null && !state.offline && speechSupported();
   const paused = state.inputMode === 'voice' && ['S5', 'S6', 'S8'].includes(state.phase);
   const center = listening
     ? { label: 'Пауза', onClick: () => dispatch({ type: 'PAUSE' }) }
@@ -203,8 +226,8 @@ export function App() {
       <DemoBadge visible={state.demo} />
       {!onVacancy && (
         <section className={styles.top}>
-          {isIntro ? (
-            <p className={styles.intro}>{INTRO}</p>
+          {isIntro || state.phase === 'S23' ? (
+            <p className={styles.intro}>{isIntro ? INTRO : ''}</p>
           ) : (
             <QuestionView q={state.q} showExample={!state.interim && !state.draft} />
           )}
@@ -214,7 +237,7 @@ export function App() {
       <section className={styles.ringZone}>
         <ProgressRing
           segments={segmentsOf(state)}
-          current={isIntro || onVacancy ? null : state.q}
+          current={isIntro || onVacancy || state.phase === 'S23' ? null : state.q}
           mode={closing ? 'close' : ringMode(state)}
           size={onVacancy ? 'mini' : 'full'}
           hidden={state.phase === 'S19'}
@@ -255,7 +278,7 @@ export function App() {
       </section>
 
       <section className={styles.actionsZone}>
-        <Actions {...actionsOf(state, dispatch, voiceOk)} />
+        <Actions {...actionsOf(state, dispatch, voiceOk, resetLink)} />
       </section>
     </main>
   );

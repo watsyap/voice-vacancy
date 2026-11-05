@@ -3,6 +3,7 @@ import { QS } from '../../shared/types';
 import { meetsMin } from '../lib/normalize';
 import { completeness, outcome } from './completeness';
 import type { Event, EventType } from './events';
+import type { Session } from './session';
 
 // ID состояний — flow.md §3 (S10′ → S10p, S18′ → S18p). S3a–S3c, S21, S24 — оверлеи, не фазы.
 export type Phase =
@@ -93,7 +94,7 @@ const PAUSED_EVENTS: readonly EventType[] = [
 ];
 
 export const ALLOWED: Record<Phase, readonly EventType[]> = {
-  S1: ['START', 'START_TEXT'],
+  S1: ['START', 'START_TEXT', 'RESTORE'],
   S2: ['MIC_OK', 'MIC_DENIED', 'MIC_MISSING', 'SPEECH_UNSUPPORTED'],
   S4: [...LISTEN_EVENTS, 'SKIP'],
   S5: [...PAUSED_EVENTS, 'SKIP', 'SKIP_FOLLOWUP'],
@@ -114,7 +115,7 @@ export const ALLOWED: Record<Phase, readonly EventType[]> = {
   S18p: ['GENERATE', 'EDIT_VACANCY'],
   S19: ['EDIT_VACANCY', 'RESET'],
   S20: ['OPEN_SEGMENT'],
-  S23: [],
+  S23: ['CONTINUE', 'RESET'],
 };
 
 const join = (a: string, b: string): string => [a.trim(), b.trim()].filter(Boolean).join(' ');
@@ -173,7 +174,18 @@ const openQuestion = (s: State, q: Q): State => ({
 });
 
 /** «Готово»: проверка min, затем анализ (flow.md §2, шаг 4; spec §5). */
+/** Оффлайн: ответ сохраняется без анализа и встаёт в очередь (spec §7 S21, AC-21.2). */
+function queueRaw(s: State, transcript: string): State {
+  const queued = setAnswer(s, s.q, { transcript, slots: null, completeness: 0, status: 'raw', followup: null });
+  const queue = s.queue.includes(s.q) ? s.queue : [...s.queue, s.q].sort();
+  return { ...queued, queue, phase: 'S12', draft: '', interim: '', inFollowup: false, tabPaused: false };
+}
+
 function finish(s: State, text: string): State {
+  if (s.offline) {
+    if (s.inFollowup) return text.trim() ? queueRaw(s, join(s.answers[s.q].transcript, text)) : s;
+    return meetsMin(s.q, text) ? queueRaw(s, text.trim()) : { ...s, phase: 'S7', draft: text, interim: '', tabPaused: false };
+  }
   if (s.inFollowup) {
     // Ответ на уточнение дописывается к исходному (spec §5, AC-11.2). Пустой — предложено: игнорировать.
     if (!text.trim()) return s;
@@ -187,6 +199,8 @@ function finish(s: State, text: string): State {
 export function reducer(s: State, e: Event): State {
   if (e.type === 'VOLUME_UNAVAILABLE') return s.volumeMode === 'pulse' ? s : { ...s, volumeMode: 'pulse' };
   if (e.type === 'DEMO_SEEN') return s.demo ? s : { ...s, demo: true };
+  const global = globalEvent(s, e);
+  if (global) return global;
   if (!ALLOWED[s.phase].includes(e.type)) return s;
 
   switch (e.type) {
@@ -288,6 +302,8 @@ export function reducer(s: State, e: Event): State {
       return s.followupReady ? s : { ...s, followupReady: true };
 
     case 'ANALYZE_FAIL':
+      // Сеть пропала во время анализа — ответ в очередь (S21).
+      if (s.offline) return queueRaw(s, s.answers[s.q].transcript);
       return {
         ...setAnswer(s, s.q, { slots: null, completeness: 0, status: 'raw', followup: null }),
         phase: 'S12',
@@ -352,7 +368,27 @@ export function reducer(s: State, e: Event): State {
       return { ...s, vacancy: { ...s.vacancy, text: e.text } };
 
     case 'RESET':
-      return initialState();
+      return { ...initialState(), offline: s.offline };
+
+    case 'RESTORE':
+      return restore(s, e.session);
+
+    case 'CONTINUE': {
+      // C6: тот же вопрос. Пропущенный не последний — к первому неотвеченному.
+      const a = s.answers[s.q];
+      const target = a.status === 'skipped' && s.q < 4 ? (firstEmpty(s) ?? s.q) : s.q;
+      const ta = s.answers[target];
+      if (ta.status !== 'empty') return { ...s, q: target, phase: resolvedPhase(ta) };
+      if (s.inputMode === 'text' || s.offline) return { ...openQuestion(s, target), inputMode: 'text' };
+      return { ...s, q: target, phase: 'S2', inputMode: 'voice' };
+    }
+
+    case 'OFFLINE':
+    case 'ONLINE':
+    case 'QUEUE_ANALYZED':
+    case 'QUEUE_FAILED':
+      // Обработаны в globalEvent.
+      return s;
 
     case 'OPEN_SEGMENT': {
       // Только к другому уже данному ответу (spec §4.1, §7 S15).
@@ -360,6 +396,47 @@ export function reducer(s: State, e: Event): State {
       return { ...s, q: e.q, phase: 'S15', draft: '', interim: '' };
     }
   }
+}
+
+/** События-оверлеи, допустимые в любой фазе: сеть и очередь (S21). */
+function globalEvent(s: State, e: Event): State | null {
+  switch (e.type) {
+    case 'OFFLINE': {
+      if (s.offline) return s;
+      const off = { ...s, offline: true };
+      // AC-21.1: голос недоступен — текстовый режим, распознанное остаётся в поле.
+      return off.inputMode === 'voice' && isRecording(off.phase) ? toText(off) : off;
+    }
+    case 'ONLINE':
+      return s.offline ? { ...s, offline: false } : s;
+    case 'QUEUE_ANALYZED': {
+      if (!s.queue.includes(e.q)) return s;
+      const value = completeness(e.q, e.res);
+      const patched = setAnswer(s, e.q, {
+        slots: e.res.slots,
+        completeness: value,
+        status: value >= 1 ? 'analyzed' : 'partial',
+        followup: null,
+      });
+      const next = { ...patched, queue: s.queue.filter((q) => q !== e.q), demo: s.demo };
+      // Если человек смотрит на этот ответ — экран обновляется сам (AC-21.3).
+      return s.q === e.q && s.phase === 'S12' ? { ...next, phase: resolvedPhase(next.answers[e.q]) } : next;
+    }
+    case 'QUEUE_FAILED':
+      return s.queue.includes(e.q) ? { ...s, queue: s.queue.filter((q) => q !== e.q) } : s;
+    default:
+      return null;
+  }
+}
+
+/** Состояние из сохранённой сессии: есть вакансия → S19, иначе S23 (spec §7 S23). */
+function restore(s: State, ss: Session): State {
+  const answers = Object.fromEntries(
+    QS.map((q) => [q, { ...emptyAnswer(), ...ss.answers[q], followup: null }]),
+  ) as Record<Q, Answer>;
+  const base: State = { ...s, q: ss.q, cursor: ss.cursor, answers, inputMode: ss.inputMode, queue: ss.queue };
+  if (ss.vacancy) return { ...base, phase: 'S19', vacancy: { text: ss.vacancy, complete: true } };
+  return { ...base, phase: 'S23' };
 }
 
 export const isRecording = (p: Phase): boolean => RECORDING.includes(p) || p === 'S11';

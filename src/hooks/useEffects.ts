@@ -64,7 +64,8 @@ export function useEffects(state: State, dispatch: Dispatch<Event>): void {
   useEffect(() => {
     latest.current = state;
   });
-  const generating = state.phase === 'S16' || state.phase === 'S17';
+  // Оффлайн или очередь не разобрана — ждём (spec §7 S16, C7): старт по online, когда очередь пуста.
+  const generating = (state.phase === 'S16' || state.phase === 'S17') && !state.offline && state.queue.length === 0;
   const genRun = state.genRun;
   useEffect(() => {
     if (!generating) return;
@@ -96,6 +97,33 @@ export function useEffects(state: State, dispatch: Dispatch<Event>): void {
     // Новый запрос — только на новый запуск (genRun), а не на S16 ↔ S17.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [genRun, generating ? 1 : 0]);
+
+  // S21: сеть. AC-21.1 — offline приходит сразу; начальное состояние берём из navigator.onLine.
+  useEffect(() => {
+    if (!navigator.onLine) dispatch({ type: 'OFFLINE' });
+    const off = () => dispatch({ type: 'OFFLINE' });
+    const on = () => dispatch({ type: 'ONLINE' });
+    window.addEventListener('offline', off);
+    window.addEventListener('online', on);
+    return () => {
+      window.removeEventListener('offline', off);
+      window.removeEventListener('online', on);
+    };
+  }, [dispatch]);
+
+  // S21: очередь по online — по одному, по порядку вопросов, без уточнений (spec §7 S21).
+  const nextQueued = state.offline ? null : (state.queue[0] ?? null);
+  const queuedTranscript = nextQueued ? state.answers[nextQueued].transcript : '';
+  useEffect(() => {
+    if (nextQueued === null) return;
+    const ctrl = new AbortController();
+    void analyze(nextQueued, queuedTranscript, ctrl.signal).then((r) => {
+      if (ctrl.signal.aborted) return;
+      if (r.demo) dispatch({ type: 'DEMO_SEEN' });
+      dispatch(r.ok ? { type: 'QUEUE_ANALYZED', q: nextQueued, res: r.res } : { type: 'QUEUE_FAILED', q: nextQueued });
+    });
+    return () => ctrl.abort();
+  }, [nextQueued, queuedTranscript, dispatch]);
 
   // S22: вкладка скрыта во время записи → пауза.
   const listening = isListening(state);
