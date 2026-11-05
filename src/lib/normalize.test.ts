@@ -10,10 +10,16 @@ describe('normalize', () => {
     expect(meetsMin(1, 'ревью кода планирование спринта')).toBe(false);
   });
 
-  it('Q1–Q3: 5 слов проходят', () => {
+  it('Q1–Q2: 5 слов проходят, 4 — нет', () => {
     expect(meetsMin(1, 'ревью кода и планирование спринта')).toBe(true);
     expect(meetsMin(2, 'запуск приложения для курьеров быстро')).toBe(true);
-    expect(meetsMin(3, 'перейдёт на другой проект CRM')).toBe(true);
+    expect(meetsMin(2, 'запуск приложения для курьеров')).toBe(false);
+  });
+
+  it('AC-10.4: Q3 — порог 2 слова, «пока не решили» проходит', () => {
+    expect(meetsMin(3, 'пока не решили')).toBe(true);
+    expect(meetsMin(3, 'не решили')).toBe(true);
+    expect(meetsMin(3, 'посмотрим')).toBe(false);
   });
 
   it('Q4: одно слово не проходит', () => {

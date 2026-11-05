@@ -7,7 +7,7 @@ export const CONFIG = {
   /** Тишина с начала записи → пауза S5. flow.md §4 */
   silenceStartMs: 5000,
   /** Порог min, слов после нормализации. spec §5 */
-  minWords: { 1: 5, 2: 5, 3: 5, 4: 2 } as Record<Q, number>,
+  minWords: { 1: 5, 2: 5, 3: 2, 4: 2 } as Record<Q, number>,
   /** Окно анализа, включая 1 повтор. spec §6, AC-9.3 */
   analyzeTimeoutMs: 4000,
   /** Задержка автостарта записи в S11. spec §7 */
