@@ -3,7 +3,9 @@
 Прототип по тестовому заданию Лаборатории ПИИ (UX/UI Frontend).
 Нанимающий менеджер голосом отвечает на 4 вопроса, система проверяет полноту ответа и собирает описание вакансии.
 
-**Статус:** спецификация готова, прототип в работе.
+**Статус:** прототип готов — https://voice-vacancy.vercel.app (Chrome / Edge; в Firefox и Safari — текстовый режим).
+
+Запуск локально: `npm install`, затем `npm run dev:full` (UI + `/api` через Vercel CLI; без `ANTHROPIC_API_KEY` — демо-режим) или `npm run dev` (только UI). Проверки: `npm run lint`, `npm test`, `npm run build`.
 
 | Документ | Что внутри |
 |---|---|
@@ -14,5 +16,6 @@
 | [docs/prompts/](docs/prompts/) | Рабочие промты (A0–A7) и продуктовые промты внутри приложения (Б1, Б2) |
 | [docs/ai-log.md](docs/ai-log.md) | Журнал работы с ИИ: что делала модель, что руками |
 | [docs/decisions.md](docs/decisions.md) | Журнал решений, принятых по ходу реализации |
+| [docs/qa.md](docs/qa.md) | Как вызвать каждое состояние S1–S24 и проверить AC |
 
 Стек: React + Vite + TypeScript, Web Speech API (ru-RU), Vercel Functions, Anthropic API. Без ключа API работает демо-режим.
