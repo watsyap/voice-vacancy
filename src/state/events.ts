@@ -32,6 +32,18 @@ export type Event =
   | { type: 'SKIP' }
   | { type: 'RERECORD' }
   | { type: 'NEXT' }
-  | { type: 'OPEN_SEGMENT'; q: Q };
+  | { type: 'OPEN_SEGMENT'; q: Q }
+  /** «Собрать вакансию» / «Повторить» / «Дописать заново» (S16, AC-16.1, S18, S18′). */
+  | { type: 'GENERATE' }
+  | { type: 'GEN_CHUNK'; text: string }
+  /** 10 с без первого фрагмента (AC-17.1). */
+  | { type: 'GEN_SLOW' }
+  | { type: 'GEN_FAIL' }
+  | { type: 'GEN_CUT' }
+  | { type: 'GEN_DONE' }
+  /** X-Demo от /api/generate. */
+  | { type: 'DEMO_SEEN' }
+  | { type: 'EDIT_VACANCY'; text: string }
+  | { type: 'RESET' };
 
 export type EventType = Event['type'];

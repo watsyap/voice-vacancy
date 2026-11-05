@@ -1,8 +1,9 @@
-import { useEffect, type Dispatch } from 'react';
+import { useEffect, useRef, type Dispatch } from 'react';
 import type { Event } from '../state/events';
 import { isListening, type State } from '../state/machine';
 import { CONFIG } from '../config';
-import { analyze } from '../lib/api';
+import { analyze, generate } from '../lib/api';
+import { buildGenerateReq } from '../lib/generateReq';
 import { speechSupported } from './useSpeech';
 
 /** Побочные эффекты по фазе (AGENTS.md §3); результат возвращается событием. */
@@ -57,6 +58,44 @@ export function useEffects(state: State, dispatch: Dispatch<Event>): void {
     const t = setTimeout(() => dispatch({ type: 'FOLLOWUP_READY' }), CONFIG.followupDelayMs);
     return () => clearTimeout(t);
   }, [awaitingFollowup, dispatch]);
+
+  // S16–S17: генерация потоком; 10 с без фрагмента → S17, 30 с → S18 (AC-17.1, AC-17.2).
+  const latest = useRef(state);
+  useEffect(() => {
+    latest.current = state;
+  });
+  const generating = state.phase === 'S16' || state.phase === 'S17';
+  const genRun = state.genRun;
+  useEffect(() => {
+    if (!generating) return;
+    const ctrl = new AbortController();
+    let got = false;
+    const slow = setTimeout(() => !got && dispatch({ type: 'GEN_SLOW' }), CONFIG.genSlowMs);
+    const fail = setTimeout(() => {
+      if (got) return;
+      ctrl.abort();
+      dispatch({ type: 'GEN_FAIL' });
+    }, CONFIG.genFailMs);
+    void generate(
+      buildGenerateReq(latest.current),
+      (text) => {
+        got = true;
+        dispatch({ type: 'GEN_CHUNK', text });
+      },
+      ctrl.signal,
+      () => dispatch({ type: 'DEMO_SEEN' }),
+    ).then((outcome) => {
+      if (ctrl.signal.aborted) return;
+      dispatch({ type: outcome === 'done' ? 'GEN_DONE' : outcome === 'cut' ? 'GEN_CUT' : 'GEN_FAIL' });
+    });
+    return () => {
+      clearTimeout(slow);
+      clearTimeout(fail);
+      ctrl.abort();
+    };
+    // Новый запрос — только на новый запуск (genRun), а не на S16 ↔ S17.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [genRun, generating ? 1 : 0]);
 
   // S22: вкладка скрыта во время записи → пауза.
   const listening = isListening(state);

@@ -1,4 +1,4 @@
-import type { AnalyzeRes, Q, Slots1, Slots2, Slots3, Slots4 } from '../../shared/types.js';
+import type { AnalyzeRes, AnySlots, GenerateAnswer, GenerateReq, Q, Slots1, Slots2, Slots3, Slots4 } from '../../shared/types.js';
 
 // Демо-режим без ключа LLM — эвристики spec §6. Ответ должен реагировать на ввод.
 
@@ -160,4 +160,53 @@ export function analyzeDemo(q: Q, transcript: string): AnalyzeRes {
   const [slots, missing] = q === 1 ? q1(transcript) : q === 2 ? q2(transcript) : q === 3 ? q3(transcript) : q4(transcript);
   const first = missing[0];
   return { slots, missing, followup: first ? (FOLLOWUP[first] ?? null) : null, off_topic: false };
+}
+
+// Демо-генерация — spec §6: тот же Markdown-шаблон (b2-generate.md), заполненный слотами.
+// raw-ответ сначала разбирается теми же эвристиками.
+
+const LIMIT_CHARS = 1500;
+
+const slotsOf = (a: GenerateAnswer): AnySlots | null =>
+  a.status === 'analyzed' ? (a.slots ?? null) : a.status === 'raw' && a.transcript ? analyzeDemo(a.q, a.transcript).slots : null;
+
+const bullets = (xs: string[]): string => xs.map((x) => `- ${x}`).join('\n');
+const sentence = (s: string): string => {
+  const t = s.trim();
+  return t ? t[0]!.toUpperCase() + t.slice(1) : t;
+};
+
+export function generateDemo(req: GenerateReq): string {
+  const by = new Map(req.answers.map((a) => [a.q, slotsOf(a)]));
+  const s1 = by.get(1) as Slots1 | null | undefined;
+  const s2 = by.get(2) as Slots2 | null | undefined;
+  const s3 = by.get(3) as Slots3 | null | undefined;
+  const s4 = by.get(4) as Slots4 | null | undefined;
+
+  const parts: string[] = [`## Роль (предположение): ${roleByTools(s4?.tools ?? [])}`];
+  if (s1?.tasks.length) parts.push(`### Чем предстоит заниматься\n${bullets(s1.tasks.map(sentence))}`);
+  if (s2 && (s2.project.description || s2.project.goal)) {
+    const lines = [s2.project.description && sentence(s2.project.description), s2.project.goal && `Цель: ${s2.project.goal}`];
+    parts.push(`### Проект на первые полгода\n${lines.filter(Boolean).join('. ')}`);
+  }
+  if (s3?.continuity) {
+    const next =
+      s3.continuity === 'same'
+        ? 'Продолжит развивать проект'
+        : s3.continuity === 'undecided'
+          ? 'Решим по итогам первого полугодия'
+          : [
+              `Перейдёт на другой проект${s3.next_project?.description ? `: ${s3.next_project.description}` : ''}`,
+              s3.next_project?.domain && `Связан с: ${s3.next_project.domain}`,
+            ]
+              .filter(Boolean)
+              .join('. ');
+    parts.push(`### Что дальше\n${next}`);
+  }
+  if (s4 && s4.tools.length + s4.knowledge.length > 0) {
+    parts.push(`### Что нужно знать и уметь\n${bullets([...s4.tools, ...s4.knowledge.map(sentence)])}`);
+  }
+  const text = parts.join('\n\n');
+  // AC-19.1: ≤ 1500 знаков. Режем по последней целой строке.
+  return text.length <= LIMIT_CHARS ? text : text.slice(0, text.lastIndexOf('\n', LIMIT_CHARS)).trimEnd();
 }

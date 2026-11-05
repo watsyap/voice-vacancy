@@ -3,6 +3,11 @@
   width: var(--ring-d-mobile);
   height: var(--ring-d-mobile);
   flex: none;
+  /* Замыкание: кольцо уменьшается до 48 px (spec §8). */
+  transition:
+    width var(--t-close) var(--ease-out-expo),
+    height var(--t-close) var(--ease-out-expo),
+    opacity var(--t-ring-out) var(--ease-out);
 }
 
 @media (min-width: 600px) {
@@ -12,9 +17,21 @@
   }
 }
 
-.mini {
+.mini,
+.ring.mini {
   width: var(--ring-d-mini);
   height: var(--ring-d-mini);
+}
+
+/* В 48 px штрихи viewBox 240 почти не видны — утолщаем (предложено). */
+.mini .stroke {
+  stroke-width: 10px;
+}
+
+/* S19: статус больше не нужен — fade 200 мс (spec §4.2). */
+.gone {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .svg {
@@ -65,6 +82,40 @@
   animation-delay: calc(var(--i) * var(--t-analyze-cycle) / 16 - var(--t-analyze-cycle));
 }
 
+/* Замыкание (S16): все 64 штриха вспыхивают волной по кругу, 600 мс (spec §8). */
+[data-mode='close'] .stroke {
+  animation: wave calc(var(--t-close) / 2) var(--ease-out-expo) both;
+  animation-delay: calc(var(--gi) * var(--t-close) / 128);
+}
+
+/* Генерация (S16–S17): яркий участок бежит по всему кольцу, цикл 1,6 с. */
+[data-mode='generate'] .stroke {
+  stroke: var(--ring-active);
+  animation: runAll var(--t-gen-cycle) linear infinite;
+  animation-delay: calc(var(--gi) * var(--t-gen-cycle) / 64 - var(--t-gen-cycle));
+}
+
+@keyframes wave {
+  0% {
+    stroke: var(--ring-done);
+    opacity: 1;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes runAll {
+  0%,
+  6.25% {
+    opacity: 1;
+  }
+  6.26%,
+  100% {
+    opacity: 0.25;
+  }
+}
+
 @keyframes breath {
   0%,
   100% {
@@ -113,7 +164,17 @@
   [data-mode='listen'] .current.active {
     animation: none;
   }
-  /* Без вращения и волн: анализ — «дыханием» (spec §8). */
+  /* Без вращения и волн (spec §8): замыкание — без волны, генерация — «дыханием». */
+  [data-mode='close'] .stroke {
+    animation: none;
+  }
+  [data-mode='generate'] .stroke {
+    animation: breath var(--t-breath) var(--ease-io) infinite;
+    animation-delay: 0s;
+  }
+  .ring {
+    transition: opacity var(--t-fade-reduced) var(--ease-out);
+  }
   [data-mode='analyze'] .current.active {
     animation: breath var(--t-breath) var(--ease-io) infinite;
     animation-delay: 0s;

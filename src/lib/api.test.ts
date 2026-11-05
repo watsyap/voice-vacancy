@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { analyze } from './api';
+import { analyze, generate } from './api';
 
 const VALID = { slots: { tasks: ['ревью кода', 'созвоны'] }, missing: [], followup: null, off_topic: false };
 
@@ -87,5 +87,45 @@ describe('analyze — spec §6', () => {
     const p = analyze(1, 'текст', outer.signal);
     outer.abort();
     expect((await p).ok).toBe(false);
+  });
+});
+
+describe('generate — поток', () => {
+  const REQ = { answers: [{ q: 1 as const, status: 'raw' as const, transcript: 'ревью' }] };
+  const streamOf = (chunks: string[], failAfter = false) => {
+      let i = 0;
+      return new ReadableStream<Uint8Array>({
+        pull(ctrl) {
+          if (i < chunks.length) ctrl.enqueue(new TextEncoder().encode(chunks[i++]));
+          else if (failAfter) ctrl.error(new Error('cut'));
+          else ctrl.close();
+        },
+      });
+    };
+
+  it('фрагменты приходят по мере поступления → done', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(streamOf(['## Роль', ' (предположение)']), { headers: { 'X-Demo': '1' } }));
+    const got: string[] = [];
+    let demo = false;
+    expect(await generate(REQ, (t) => got.push(t), undefined, () => (demo = true))).toBe('done');
+    expect(got.join('')).toBe('## Роль (предположение)');
+    expect(demo).toBe(true);
+  });
+
+  it('обрыв после фрагмента → cut (S18′)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response(streamOf(['## Роль'], true)));
+    expect(await generate(REQ, () => {})).toBe('cut');
+  });
+
+  it('не-200 или пустой поток → fail (S18)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('{"error":"upstream"}', { status: 502 }));
+    expect(await generate(REQ, () => {})).toBe('fail');
+    fetchMock.mockResolvedValueOnce(new Response(streamOf([])));
+    expect(await generate(REQ, () => {})).toBe('fail');
+  });
+
+  it('сеть упала до ответа → fail', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('network'));
+    expect(await generate(REQ, () => {})).toBe('fail');
   });
 });

@@ -237,6 +237,14 @@ describe('недопустимые события', () => {
     { type: 'SET_INPUT_MODE', mode: 'text' },
     { type: 'DRAFT_EDIT', text: 'x' },
     { type: 'FOLLOWUP_READY' },
+    { type: 'GENERATE' },
+    { type: 'GEN_CHUNK', text: 'x' },
+    { type: 'GEN_SLOW' },
+    { type: 'GEN_FAIL' },
+    { type: 'GEN_CUT' },
+    { type: 'GEN_DONE' },
+    { type: 'EDIT_VACANCY', text: 'x' },
+    { type: 'RESET' },
   ];
 
   it('по таблице ALLOWED: событие вне фазы возвращает тот же state', () => {
@@ -439,5 +447,80 @@ describe('A5.4 — уточнение S11', () => {
   it('AC-11.3: лимит 1 — после ответа на уточнение второго нет даже с followup', () => {
     const s = run(s11voice(), { type: 'FOLLOWUP_READY' }, { type: 'SPEECH_FINAL', text: 'и всё' }, { type: 'DONE' }, ONE_TASK);
     expect(s.phase).toBe('S10p');
+  });
+});
+
+describe('A5.5 — генерация S16–S19', () => {
+  /** Все 4 вопроса отвечены текстом, Q4 в S12. */
+  const atQ4 = (): State => {
+    let s = run(initialState(), { type: 'START_TEXT' });
+    for (const q of [1, 2, 3, 4] as const) {
+      s = run(s, { type: 'SUBMIT_TEXT', text: 'ответ из пяти слов минимум тут' }, { type: 'ANALYZE_FAIL' });
+      if (q < 4) s = run(s, { type: 'NEXT' });
+    }
+    return s;
+  };
+
+  it('AC-16.1: «Собрать вакансию» на Q4 → S16, новый запуск', () => {
+    const s = run(atQ4(), { type: 'GENERATE' });
+    expect(s.phase).toBe('S16');
+    expect(s.genRun).toBe(1);
+  });
+
+  it('не с Q4 — GENERATE не работает', () => {
+    const s = run(initialState(), { type: 'START_TEXT' }, { type: 'SUBMIT_TEXT', text: 'ответ из пяти слов минимум тут' }, {
+      type: 'ANALYZE_FAIL',
+    });
+    expect(reducer(s, { type: 'GENERATE' })).toBe(s);
+  });
+
+  it('фрагменты копятся; GEN_DONE → S19', () => {
+    const s = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_CHUNK', text: '## Роль' }, { type: 'GEN_CHUNK', text: ' (предположение)' }, {
+      type: 'GEN_DONE',
+    });
+    expect(s.phase).toBe('S19');
+    expect(s.vacancy).toEqual({ text: '## Роль (предположение)', complete: true });
+  });
+
+  it('AC-17.1 / 17.2: 10 с без фрагмента → S17; затем ошибка → S18', () => {
+    const slow = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_SLOW' });
+    expect(slow.phase).toBe('S17');
+    expect(run(slow, { type: 'GEN_FAIL' }).phase).toBe('S18');
+    expect(run(slow, { type: 'GEN_CHUNK', text: 'x' }).phase).toBe('S16');
+  });
+
+  it('GEN_SLOW после первого фрагмента ничего не делает', () => {
+    const s = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_CHUNK', text: 'x' });
+    expect(reducer(s, { type: 'GEN_SLOW' })).toBe(s);
+  });
+
+  it('C5: S18 → «Повторить» → S16 → S19; ответы целы', () => {
+    const failed = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_FAIL' });
+    expect(failed.phase).toBe('S18');
+    expect(failed.answers[1].transcript).toBe('ответ из пяти слов минимум тут');
+    const s = run(failed, { type: 'GENERATE' }, { type: 'GEN_CHUNK', text: 'текст' }, { type: 'GEN_DONE' });
+    expect(s.phase).toBe('S19');
+    expect(s.genRun).toBe(2);
+  });
+
+  it('S18′: обрыв сохраняет часть текста, правка разрешена, «Дописать заново» начинает с нуля', () => {
+    const cut = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_CHUNK', text: '## Роль' }, { type: 'GEN_CUT' });
+    expect(cut).toMatchObject({ phase: 'S18p', vacancy: { text: '## Роль', complete: false } });
+    expect(run(cut, { type: 'EDIT_VACANCY', text: '## Роль!' }).vacancy.text).toBe('## Роль!');
+    expect(run(cut, { type: 'GENERATE' })).toMatchObject({ phase: 'S16', vacancy: { text: '' } });
+  });
+
+  it('S19: правка и «Новая вакансия» → S1', () => {
+    const done = run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_CHUNK', text: 'текст' }, { type: 'GEN_DONE' });
+    expect(run(done, { type: 'EDIT_VACANCY', text: 'правка' }).vacancy.text).toBe('правка');
+    expect(run(done, { type: 'RESET' })).toEqual(initialState());
+  });
+
+  it('пустой поток с GEN_DONE → S18', () => {
+    expect(run(atQ4(), { type: 'GENERATE' }, { type: 'GEN_DONE' }).phase).toBe('S18');
+  });
+
+  it('DEMO_SEEN ставит demo в любой фазе', () => {
+    expect(reducer(initialState(), { type: 'DEMO_SEEN' }).demo).toBe(true);
   });
 });

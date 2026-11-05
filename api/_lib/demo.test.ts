@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { validateAnalyzeRes } from '../../shared/schema.js';
 import type { Q } from '../../shared/types.js';
 import { completeness } from '../../src/state/completeness.js';
-import { analyzeDemo, roleByTools } from './demo.js';
+import { analyzeDemo, generateDemo, roleByTools } from './demo.js';
 
 describe('демо-эвристики — spec §6', () => {
   it('Q1: деление по запятым, «и», точкам; паразиты и вводные убраны', () => {
@@ -101,5 +101,52 @@ describe('демо-эвристики — spec §6', () => {
       [4, 'y'.repeat(200) + ', Figma'],
     ];
     for (const [q, t] of inputs) expect(validateAnalyzeRes(q, analyzeDemo(q, t))).not.toBeNull();
+  });
+});
+
+describe('демо-генерация — spec §6, b2-generate.md', () => {
+  const full = {
+    answers: [
+      { q: 1 as const, status: 'analyzed' as const, slots: { tasks: ['ревью кода', 'планирование спринта'] } },
+      { q: 2 as const, status: 'analyzed' as const, slots: { project: { description: 'приложение для курьеров', goal: 'сократить время доставки' } } },
+      { q: 3 as const, status: 'analyzed' as const, slots: { continuity: 'undecided' as const, next_project: null } },
+      { q: 4 as const, status: 'analyzed' as const, slots: { tools: ['React', 'Figma', 'JavaScript'], knowledge: ['B2B-аналитика'] } },
+    ],
+  };
+
+  it('структура b2 и роль с пометкой «(предположение)»', () => {
+    const t = generateDemo(full);
+    expect(t.startsWith('## Роль (предположение): Разработчик')).toBe(true);
+    for (const h of ['### Чем предстоит заниматься', '### Проект на первые полгода', '### Что дальше', '### Что нужно знать и уметь']) {
+      expect(t).toContain(h);
+    }
+    expect(t).toContain('Решим по итогам первого полугодия');
+    expect(t).toContain('- Ревью кода');
+  });
+
+  it('AC-16.2: пропущенный Q2 → нет раздела «Проект»', () => {
+    const t = generateDemo({ answers: [full.answers[0]!, { q: 2, status: 'skipped' }, full.answers[2]!, full.answers[3]!] });
+    expect(t).not.toContain('Проект на первые полгода');
+  });
+
+  it('raw-ответ разбирается эвристиками и попадает в раздел (AC-12.2)', () => {
+    const t = generateDemo({ answers: [{ q: 1, status: 'raw', transcript: 'ревью кода, созвоны с заказчиком' }] });
+    expect(t).toContain('- Созвоны с заказчиком');
+    expect(t).toContain('Роль (предположение): Специалист');
+  });
+
+  it('AC-19.1: ≤ 1500 знаков, нет запрещённых слов', () => {
+    const long = { answers: [{ q: 1 as const, status: 'analyzed' as const, slots: { tasks: Array.from({ length: 40 }, (_, i) => `задача номер ${i} с длинным описанием`) } }] };
+    expect(generateDemo(long).length).toBeLessThanOrEqual(1500);
+    expect(generateDemo(full)).not.toMatch(/зарплат|бонус|дружный коллектив/i);
+  });
+
+  it('Q3 same / other', () => {
+    expect(generateDemo({ answers: [{ q: 3, status: 'analyzed', slots: { continuity: 'same', next_project: null } }] })).toContain(
+      'Продолжит развивать проект',
+    );
+    expect(
+      generateDemo({ answers: [{ q: 3, status: 'analyzed', slots: { continuity: 'other', next_project: { description: 'CRM', domain: 'продажи' } } }] }),
+    ).toContain('Перейдёт на другой проект: CRM. Связан с: продажи');
   });
 });

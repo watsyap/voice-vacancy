@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, type Dispatch } from 'react';
+import { useCallback, useEffect, useReducer, useState, type Dispatch } from 'react';
 import type { Q } from '../shared/types';
 import { QS } from '../shared/types';
 import { Actions, type Action } from './components/Actions';
@@ -9,6 +9,7 @@ import { StatusLine } from './components/StatusLine';
 import { TextAnswer } from './components/TextAnswer';
 import { TranscriptLive } from './components/TranscriptLive';
 import { Understood } from './components/Understood';
+import { VacancyEditor } from './components/VacancyEditor';
 import { CONFIG } from './config';
 import { useEffects } from './hooks/useEffects';
 import { speechSupported, useSpeech } from './hooks/useSpeech';
@@ -34,6 +35,7 @@ function segmentsOf(s: State): Record<Q, SegmentState> {
 
 function ringMode(s: State): RingMode {
   if (s.phase === 'S9') return 'analyze';
+  if (s.phase === 'S16' || s.phase === 'S17') return 'generate';
   if (isListening(s)) return 'listen';
   return 'idle';
 }
@@ -51,6 +53,9 @@ function statusOf(s: State): string {
   if (s.phase === 'S2') return 'Разрешите доступ к микрофону';
   if (s.phase === 'S9') return 'Разбираю ответ';
   if (s.phase === 'S20') return 'Нужен хотя бы один ответ, чтобы собрать вакансию';
+  if (s.phase === 'S17') return 'Ещё немного…';
+  if (s.phase === 'S18') return 'Не получилось собрать вакансию. Ответы сохранены';
+  if (s.phase === 'S18p') return 'Текст не дописан';
   if (isResolved(s.phase) || s.phase === 'S15') return answerText(s);
   if (!isRecording(s.phase)) return '';
   if (s.phase === 'S7') return 'Расскажите чуть подробнее';
@@ -69,6 +74,9 @@ function statusOf(s: State): string {
       return '';
   }
 }
+
+/** Экран вакансии (spec §4.2). */
+const VACANCY: State['phase'][] = ['S16', 'S17', 'S18', 'S18p', 'S19'];
 
 /** Тап по сегменту — только здесь (spec §4.1, §7 S15). */
 const SEGMENT_PHASES: State['phase'][] = ['S10', 'S10p', 'S12', 'S14', 'S20'];
@@ -91,8 +99,7 @@ function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): Actio
   }
   const rerecord: Action = { label: 'Перезаписать', onClick: ev({ type: 'RERECORD' }) };
   const next: Action = { label: 'Следующий вопрос', onClick: ev({ type: 'NEXT' }) };
-  // «Собрать вакансию» — запуск генерации появится в A5.5.
-  const build: Action = { label: 'Собрать вакансию', onClick: () => {} };
+  const build: Action = { label: 'Собрать вакансию', onClick: ev({ type: 'GENERATE' }) };
   switch (s.phase) {
     case 'S10':
     case 'S10p':
@@ -102,6 +109,11 @@ function actionsOf(s: State, dispatch: Dispatch<Event>, voiceOk: boolean): Actio
       return s.q === 4 ? { primary: build } : {};
     case 'S15':
       return { primary: next, secondary: rerecord };
+    case 'S18':
+      return { primary: { label: 'Повторить', onClick: ev({ type: 'GENERATE' }) } };
+    case 'S18p':
+      // «Дописать заново» — полная перегенерация, правки частичного текста теряются (spec §7 S18′).
+      return { primary: { label: 'Дописать заново', onClick: ev({ type: 'GENERATE' }) } };
   }
   if (!isRecording(s.phase)) return {};
 
@@ -160,6 +172,22 @@ export function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [state.inputMode, state.phase, listening]);
 
+  // Замыкание (S16, AC-16.1): 600 мс волна и уменьшение кольца, затем текст. Только при входе с экрана вопроса.
+  const [lastPhase, setLastPhase] = useState(state.phase);
+  const [closeKey, setCloseKey] = useState(0);
+  const [closedKey, setClosedKey] = useState(0);
+  if (state.phase !== lastPhase) {
+    setLastPhase(state.phase);
+    if (state.phase === 'S16' && !VACANCY.includes(lastPhase)) setCloseKey((k) => k + 1);
+  }
+  useEffect(() => {
+    if (!closeKey) return;
+    const t = setTimeout(() => setClosedKey(closeKey), CONFIG.closeMs);
+    return () => clearTimeout(t);
+  }, [closeKey]);
+  const closing = closeKey !== closedKey && state.phase === 'S16';
+  const onVacancy = VACANCY.includes(state.phase);
+
   const isIntro = state.phase === 'S1';
   const recording = isRecording(state.phase);
   const voiceOk = state.voiceBlock === null && speechSupported();
@@ -173,19 +201,23 @@ export function App() {
   return (
     <main className={styles.screen}>
       <DemoBadge visible={state.demo} />
-      <section className={styles.top}>
-        {isIntro ? (
-          <p className={styles.intro}>{INTRO}</p>
-        ) : (
-          <QuestionView q={state.q} showExample={!state.interim && !state.draft} />
-        )}
-      </section>
+      {!onVacancy && (
+        <section className={styles.top}>
+          {isIntro ? (
+            <p className={styles.intro}>{INTRO}</p>
+          ) : (
+            <QuestionView q={state.q} showExample={!state.interim && !state.draft} />
+          )}
+        </section>
+      )}
 
       <section className={styles.ringZone}>
         <ProgressRing
           segments={segmentsOf(state)}
-          current={isIntro ? null : state.q}
-          mode={ringMode(state)}
+          current={isIntro || onVacancy ? null : state.q}
+          mode={closing ? 'close' : ringMode(state)}
+          size={onVacancy ? 'mini' : 'full'}
+          hidden={state.phase === 'S19'}
           levelRef={volume.level}
           pulse={state.volumeMode === 'pulse'}
           pulseKey={state.draft.length + state.interim.length}
@@ -209,6 +241,15 @@ export function App() {
             autoFocus
             onChange={(text) => dispatch({ type: 'DRAFT_EDIT', text })}
             onSubmit={() => dispatch({ type: 'SUBMIT_TEXT', text: state.draft })}
+          />
+        )}
+        {onVacancy && !closing && state.phase !== 'S18' && (
+          <VacancyEditor
+            text={state.vacancy.text}
+            streaming={state.phase === 'S16' || state.phase === 'S17'}
+            complete={state.phase === 'S19'}
+            onEdit={(text) => dispatch({ type: 'EDIT_VACANCY', text })}
+            onReset={() => dispatch({ type: 'RESET' })}
           />
         )}
       </section>

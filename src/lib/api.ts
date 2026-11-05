@@ -1,5 +1,5 @@
 import { validateAnalyzeRes } from '../../shared/schema';
-import type { AnalyzeRes, Q } from '../../shared/types';
+import type { AnalyzeRes, GenerateReq, Q } from '../../shared/types';
 import { CONFIG } from '../config';
 
 export type AnalyzeResult = { ok: true; res: AnalyzeRes; demo: boolean } | { ok: false; demo: boolean };
@@ -47,5 +47,49 @@ export async function analyze(q: Q, transcript: string, signal?: AbortSignal): P
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+export type GenerateOutcome = 'done' | 'cut' | 'fail';
+
+/**
+ * POST /api/generate, поток Markdown (spec §6). Каждый фрагмент — в onChunk.
+ * Обрыв после ≥ 1 фрагмента → 'cut' (S18′), до первого или не-200 → 'fail' (S18) — AGENTS.md §6.
+ */
+export async function generate(
+  req: GenerateReq,
+  onChunk: (text: string) => void,
+  signal?: AbortSignal,
+  onDemo?: () => void,
+): Promise<GenerateOutcome> {
+  let got = false;
+  try {
+    const r = await fetch('/api/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+      signal,
+    });
+    if (r.headers.get('X-Demo') === '1') onDemo?.();
+    if (!r.ok || !r.body) return 'fail';
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = dec.decode(value, { stream: true });
+      if (text) {
+        got = true;
+        onChunk(text);
+      }
+    }
+    const tail = dec.decode();
+    if (tail) {
+      got = true;
+      onChunk(tail);
+    }
+    return got ? 'done' : 'fail';
+  } catch {
+    return got ? 'cut' : 'fail';
   }
 }

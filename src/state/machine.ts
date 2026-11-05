@@ -43,6 +43,8 @@ export type State = {
   volumeMode: 'rms' | 'pulse';
   queue: Q[];
   vacancy: { text: string; complete: boolean };
+  /** Номер запуска генерации: новый запуск — новый запрос (useEffects). */
+  genRun: number;
   demo: boolean;
   noSpeechCount: number;
 };
@@ -72,6 +74,7 @@ export const initialState = (): State => ({
   volumeMode: 'rms',
   queue: [],
   vacancy: { text: '', complete: false },
+  genRun: 0,
   demo: false,
   noSpeechCount: 0,
 });
@@ -98,18 +101,18 @@ export const ALLOWED: Record<Phase, readonly EventType[]> = {
   S7: [...LISTEN_EVENTS, 'SKIP'],
   S8: [...PAUSED_EVENTS, 'RERECORD', 'SKIP_FOLLOWUP'],
   S9: ['ANALYZE_OK', 'ANALYZE_FAIL'],
-  S10: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
-  S10p: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
+  S10: ['NEXT', 'RERECORD', 'OPEN_SEGMENT', 'GENERATE'],
+  S10p: ['NEXT', 'RERECORD', 'OPEN_SEGMENT', 'GENERATE'],
   S11: [...LISTEN_EVENTS, 'SKIP_FOLLOWUP', 'FOLLOWUP_READY'],
-  S12: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
+  S12: ['NEXT', 'RERECORD', 'OPEN_SEGMENT', 'GENERATE'],
   S13: [],
-  S14: ['NEXT', 'OPEN_SEGMENT'],
+  S14: ['NEXT', 'OPEN_SEGMENT', 'GENERATE'],
   S15: ['NEXT', 'RERECORD'],
-  S16: [],
-  S17: [],
-  S18: [],
-  S18p: [],
-  S19: [],
+  S16: ['GEN_CHUNK', 'GEN_SLOW', 'GEN_FAIL', 'GEN_CUT', 'GEN_DONE'],
+  S17: ['GEN_CHUNK', 'GEN_FAIL', 'GEN_CUT', 'GEN_DONE'],
+  S18: ['GENERATE'],
+  S18p: ['GENERATE', 'EDIT_VACANCY'],
+  S19: ['EDIT_VACANCY', 'RESET'],
   S20: ['OPEN_SEGMENT'],
   S23: [],
 };
@@ -183,6 +186,7 @@ function finish(s: State, text: string): State {
 
 export function reducer(s: State, e: Event): State {
   if (e.type === 'VOLUME_UNAVAILABLE') return s.volumeMode === 'pulse' ? s : { ...s, volumeMode: 'pulse' };
+  if (e.type === 'DEMO_SEEN') return s.demo ? s : { ...s, demo: true };
   if (!ALLOWED[s.phase].includes(e.type)) return s;
 
   switch (e.type) {
@@ -320,6 +324,35 @@ export function reducer(s: State, e: Event): State {
       // Все отвечены и мы на последнем: дальше только «Собрать вакансию» (A5.5).
       return s;
     }
+
+    case 'GENERATE': {
+      // Только с последнего вопроса, когда неотвеченных нет и не всё пропущено (AC-16.1, S20).
+      const fromQuestion = s.phase !== 'S18' && s.phase !== 'S18p';
+      if (fromQuestion && (s.q !== 4 || firstEmpty(s) !== null)) return s;
+      if (QS.every((q) => s.answers[q].status === 'skipped')) return s;
+      return { ...s, phase: 'S16', vacancy: { text: '', complete: false }, genRun: s.genRun + 1 };
+    }
+
+    case 'GEN_CHUNK':
+      return { ...s, phase: 'S16', vacancy: { text: s.vacancy.text + e.text, complete: false } };
+
+    case 'GEN_SLOW':
+      return s.vacancy.text ? s : { ...s, phase: 'S17' };
+
+    case 'GEN_FAIL':
+      return { ...s, phase: 'S18', vacancy: { text: '', complete: false } };
+
+    case 'GEN_CUT':
+      return { ...s, phase: 'S18p' };
+
+    case 'GEN_DONE':
+      return s.vacancy.text ? { ...s, phase: 'S19', vacancy: { ...s.vacancy, complete: true } } : { ...s, phase: 'S18' };
+
+    case 'EDIT_VACANCY':
+      return { ...s, vacancy: { ...s.vacancy, text: e.text } };
+
+    case 'RESET':
+      return initialState();
 
     case 'OPEN_SEGMENT': {
       // Только к другому уже данному ответу (spec §4.1, §7 S15).

@@ -31,6 +31,8 @@ type Props = {
   /** Меняется на каждом фрагменте распознавания. */
   pulseKey?: string | number;
   size?: 'full' | 'mini';
+  /** Скрыть с fade (S19). */
+  hidden?: boolean;
   centerLabel?: string;
   onCenter?: () => void;
   onSegment?: (q: Q) => void;
@@ -80,6 +82,7 @@ export function ProgressRing({
   pulse = false,
   pulseKey,
   size = 'full',
+  hidden = false,
   centerLabel,
   onCenter,
   onSegment,
@@ -134,7 +137,11 @@ export function ProgressRing({
   }, [pulse, mode, pulseKey]);
 
   return (
-    <div className={`${styles.ring} ${size === 'mini' ? styles.mini : ''}`} data-mode={mode}>
+    <div
+      className={`${styles.ring} ${size === 'mini' ? styles.mini : ''} ${hidden ? styles.gone : ''}`}
+      data-mode={mode}
+      aria-hidden={hidden || undefined}
+    >
       <svg ref={svg} viewBox={`0 0 ${VIEW} ${VIEW}`} className={styles.svg} aria-hidden={!segmentsClickable}>
         {QS.map((q, seg) => {
           const isCurrent = q === current;
@@ -144,7 +151,7 @@ export function ProgressRing({
                 const kind = strokeKind(segments[q], i, isCurrent);
                 const isLive = isCurrent && kind === 'active' && mode === 'listen';
                 const a = rad(angleOf(seg, i));
-                const style = { '--i': i } as CSSProperties;
+                const style = { '--i': i, '--gi': seg * PER_SEGMENT + i } as CSSProperties;
                 return (
                   <line
                     key={i}
