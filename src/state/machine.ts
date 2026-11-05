@@ -33,6 +33,8 @@ export type State = {
   interim: string;
   /** Запись идёт как ответ на уточнение: «Готово» дописывает draft к транскрипту (spec §5). */
   inFollowup: boolean;
+  /** Уточнение прочитано (600 мс прошли): запись в S11 разрешена. */
+  followupReady: boolean;
   /** S8 по скрытию вкладки (S22): другая подпись. */
   tabPaused: boolean;
   inputMode: 'voice' | 'text';
@@ -62,6 +64,7 @@ export const initialState = (): State => ({
   draft: '',
   interim: '',
   inFollowup: false,
+  followupReady: false,
   tabPaused: false,
   inputMode: 'voice',
   voiceBlock: null,
@@ -97,7 +100,7 @@ export const ALLOWED: Record<Phase, readonly EventType[]> = {
   S9: ['ANALYZE_OK', 'ANALYZE_FAIL'],
   S10: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
   S10p: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
-  S11: [...LISTEN_EVENTS, 'SKIP_FOLLOWUP'],
+  S11: [...LISTEN_EVENTS, 'SKIP_FOLLOWUP', 'FOLLOWUP_READY'],
   S12: ['NEXT', 'RERECORD', 'OPEN_SEGMENT'],
   S13: [],
   S14: ['NEXT', 'OPEN_SEGMENT'],
@@ -266,8 +269,19 @@ export function reducer(s: State, e: Event): State {
         followup: e.res.followup,
         followupUsed: a.followupUsed || next === 'S11',
       });
-      return { ...patched, phase: next, inFollowup: next === 'S11', draft: '', interim: '', demo: s.demo || !!e.demo };
+      return {
+        ...patched,
+        phase: next,
+        inFollowup: next === 'S11',
+        followupReady: false,
+        draft: '',
+        interim: '',
+        demo: s.demo || !!e.demo,
+      };
     }
+
+    case 'FOLLOWUP_READY':
+      return s.followupReady ? s : { ...s, followupReady: true };
 
     case 'ANALYZE_FAIL':
       return {
@@ -318,5 +332,5 @@ export function reducer(s: State, e: Event): State {
 export const isRecording = (p: Phase): boolean => RECORDING.includes(p) || p === 'S11';
 /** Идёт захват голоса (распознавание и громкость активны). */
 export const isListening = (s: State): boolean =>
-  s.inputMode === 'voice' && (s.phase === 'S4' || s.phase === 'S7' || s.phase === 'S11');
+  s.inputMode === 'voice' && (s.phase === 'S4' || s.phase === 'S7' || (s.phase === 'S11' && s.followupReady));
 export const isResolved = (p: Phase): boolean => RESOLVED.includes(p);

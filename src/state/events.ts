@@ -26,6 +26,8 @@ export type Event =
   /** demo — сервер вернул X-Demo: 1 (AGENTS.md §6); флаг не сбрасывается. */
   | { type: 'ANALYZE_OK'; res: AnalyzeRes; demo?: boolean }
   | { type: 'ANALYZE_FAIL'; demo?: boolean }
+  /** Прошло 600 мс после показа уточнения — можно начинать запись (spec §7 S11). */
+  | { type: 'FOLLOWUP_READY' }
   | { type: 'SKIP_FOLLOWUP' }
   | { type: 'SKIP' }
   | { type: 'RERECORD' }

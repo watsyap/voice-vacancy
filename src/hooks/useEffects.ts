@@ -1,6 +1,7 @@
 import { useEffect, type Dispatch } from 'react';
 import type { Event } from '../state/events';
 import { isListening, type State } from '../state/machine';
+import { CONFIG } from '../config';
 import { analyze } from '../lib/api';
 import { speechSupported } from './useSpeech';
 
@@ -48,6 +49,14 @@ export function useEffects(state: State, dispatch: Dispatch<Event>): void {
     });
     return () => ctrl.abort();
   }, [state.phase, state.q, transcript, dispatch]);
+
+  // S11: запись стартует через 600 мс после показа уточнения, чтобы успели прочитать (spec §7, AC-11.1).
+  const awaitingFollowup = state.phase === 'S11' && !state.followupReady;
+  useEffect(() => {
+    if (!awaitingFollowup) return;
+    const t = setTimeout(() => dispatch({ type: 'FOLLOWUP_READY' }), CONFIG.followupDelayMs);
+    return () => clearTimeout(t);
+  }, [awaitingFollowup, dispatch]);
 
   // S22: вкладка скрыта во время записи → пауза.
   const listening = isListening(state);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AnalyzeRes, Q } from '../../shared/types';
 import type { Event } from './events';
-import { ALLOWED, initialState, reducer, type Phase, type State } from './machine';
+import { ALLOWED, initialState, isListening, reducer, type Phase, type State } from './machine';
 
 const run = (s: State, ...events: Event[]): State => events.reduce(reducer, s);
 
@@ -236,6 +236,7 @@ describe('недопустимые события', () => {
     { type: 'TAB_HIDDEN' },
     { type: 'SET_INPUT_MODE', mode: 'text' },
     { type: 'DRAFT_EDIT', text: 'x' },
+    { type: 'FOLLOWUP_READY' },
   ];
 
   it('по таблице ALLOWED: событие вне фазы возвращает тот же state', () => {
@@ -403,5 +404,40 @@ describe('A5.3 — демо-флаг', () => {
 
   it('ошибка с X-Demo тоже ставит demo', () => {
     expect(run(inS9(), { type: 'ANALYZE_FAIL', demo: true }).demo).toBe(true);
+  });
+});
+
+describe('A5.4 — уточнение S11', () => {
+  const s11voice = () =>
+    run(voiceS4(), { type: 'SPEECH_FINAL', text: 'ревью кода каждый день с утра' }, { type: 'DONE' }, ONE_TASK);
+
+  it('AC-11.1: в S11 запись не идёт, пока не прошли 600 мс', () => {
+    const s = s11voice();
+    expect(s.phase).toBe('S11');
+    expect(isListening(s)).toBe(false);
+    expect(isListening(run(s, { type: 'FOLLOWUP_READY' }))).toBe(true);
+  });
+
+  it('FOLLOWUP_READY вне S11 ничего не делает', () => {
+    const s = voiceS4();
+    expect(reducer(s, { type: 'FOLLOWUP_READY' })).toBe(s);
+  });
+
+  it('пауза и продолжение в уточнении не требуют повторной задержки', () => {
+    const s = run(s11voice(), { type: 'FOLLOWUP_READY' }, { type: 'PAUSE' }, { type: 'RESUME' });
+    expect(s.phase).toBe('S11');
+    expect(isListening(s)).toBe(true);
+  });
+
+  it('новое уточнение после перезаписи снова ждёт 600 мс', () => {
+    const ready = run(s11voice(), { type: 'FOLLOWUP_READY' }, { type: 'SKIP_FOLLOWUP' }, { type: 'RERECORD' });
+    const again = run(ready, { type: 'SPEECH_FINAL', text: 'ревью кода каждый день с утра' }, { type: 'DONE' }, ONE_TASK);
+    expect(again.phase).toBe('S11');
+    expect(again.followupReady).toBe(false);
+  });
+
+  it('AC-11.3: лимит 1 — после ответа на уточнение второго нет даже с followup', () => {
+    const s = run(s11voice(), { type: 'FOLLOWUP_READY' }, { type: 'SPEECH_FINAL', text: 'и всё' }, { type: 'DONE' }, ONE_TASK);
+    expect(s.phase).toBe('S10p');
   });
 });
