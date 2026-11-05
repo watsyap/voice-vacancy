@@ -17,16 +17,14 @@ export class UpstreamError extends Error {}
 
 /** Б1: извлечение слотов. Невалидный JSON → UpstreamError (502), клиент повторит в своём окне 4 с. */
 export async function analyzeLLM(q: Q, transcript: string): Promise<AnalyzeRes> {
-  // b1-analyze.md: temperature 0. В SDK 1.x параметр убран из типов (устарел в API), но Haiku 4.5 его принимает —
-  // передаём явно. Если модель его отвергнет (400), ответ уйдёт как upstream → S12 (decisions.md).
-  const params = {
+  // b1-analyze.md задаёт temperature 0, но API его больше не принимает (400 «Extra inputs are not permitted»).
+  // Стабильность решения об уточнении держит код: полнота считается по слотам (spec §5, decisions.md).
+  const res = await llm().messages.create({
     model: MODEL_ANALYZE,
     max_tokens: 400,
-    temperature: 0,
     system: B1_SYSTEM,
     messages: [{ role: 'user', content: b1User(q, transcript) }],
-  } as Anthropic.MessageCreateParamsNonStreaming;
-  const res = await llm().messages.create(params);
+  });
   if (res.stop_reason === 'refusal') throw new UpstreamError('refusal');
   const text = res.content
     .filter((b): b is Anthropic.TextBlock => b.type === 'text')

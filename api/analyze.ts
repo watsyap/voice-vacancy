@@ -32,6 +32,9 @@ export async function POST(req: Request): Promise<Response> {
   try {
     return json(await analyzeLLM(q, transcript.trim()));
   } catch (e) {
+    // Причина — в логи Vercel (без ключа и транскрипта).
+    const status = e instanceof Anthropic.APIError ? e.status : undefined;
+    console.error('analyze failed:', e instanceof Error ? e.constructor.name : typeof e, status ?? '', e instanceof Error ? e.message : '');
     if (e instanceof Anthropic.APIConnectionTimeoutError) return error('timeout');
     if (e instanceof UpstreamError || e instanceof Anthropic.APIError) return error('upstream');
     return error('internal');
